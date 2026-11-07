@@ -16,7 +16,29 @@
       <h1 id="verdictTitle">Reading sensors</h1>
       <div id="verdictBody" class="verdict-body"></div>
     </div>
-    <p class="fresh" id="fresh"></p>
+    <div class="tools">
+      <p class="fresh" id="fresh"></p>
+      <button type="button" class="tool" id="railToggle" aria-controls="rail">Hide detail</button>
+      <button type="button" class="tool" id="settingsToggle" aria-expanded="false" aria-controls="settings">Settings</button>
+    </div>
+    <section class="settings" id="settings" aria-label="Settings" hidden>
+      <fieldset>
+        <legend>Temperature</legend>
+        <label><input type="radio" name="unit" value="C" /> Celsius (°C)</label>
+        <label><input type="radio" name="unit" value="F" /> Fahrenheit (°F)</label>
+      </fieldset>
+      <fieldset>
+        <legend>Update the values</legend>
+        <label><input type="radio" name="rate" value="1" /> Every second</label>
+        <label><input type="radio" name="rate" value="2" /> Twice a second <small>uses about twice as much CPU</small></label>
+      </fieldset>
+      <fieldset>
+        <legend>Fan icons</legend>
+        <label><input type="radio" name="fans" value="spin" /> Spin faster or slower with the fan</label>
+        <label><input type="radio" name="fans" value="still" /> Stay still <small>uses the least CPU</small></label>
+      </fieldset>
+      <p class="settings-note">Settings are kept for your Windows account.</p>
+    </section>
   </header>
 
   <main class="bench">
@@ -29,7 +51,7 @@
       </div>
     </section>
 
-    <aside class="rail" aria-label="Detail of the selected part">
+    <aside class="rail" id="rail" aria-label="Detail of the selected part">
       <h2 id="railTitle"></h2>
       <p class="rail-sub" id="railSub"></p>
       <div class="scope">

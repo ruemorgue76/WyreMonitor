@@ -59,6 +59,7 @@ button {
 
 /* ---------- Verdict ---------- */
 .top {
+  position: relative;
   display: grid;
   grid-template-columns: 130px minmax(0, 1fr) auto;
   gap: 4px var(--step);
@@ -66,7 +67,43 @@ button {
   padding: 20px 24px 16px;
 }
 .mark { color: var(--silk-dim); font-size: 14px; padding-top: 9px; }
-.fresh { color: var(--silk-dim); font-size: 13px; padding-top: 10px; white-space: nowrap; }
+.fresh { color: var(--silk-dim); font-size: 13px; white-space: nowrap; }
+
+/* ---------- Header buttons and settings ---------- */
+.tools { display: flex; align-items: center; gap: 8px; padding-top: 4px; }
+.tools .fresh { margin-right: 6px; }
+.tool {
+  padding: 5px 12px;
+  font-size: 13px;
+  white-space: nowrap;
+  border: 1px solid var(--trace);
+  border-radius: 3px;
+}
+.tool:hover, #settingsToggle[aria-expanded="true"] { background: var(--mask-up); }
+
+.settings {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% - 8px);
+  right: 24px;
+  width: min(360px, calc(100vw - 32px));
+  padding: 14px 16px 12px;
+  background: var(--epoxy);
+  border: 1px solid var(--trace);
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgb(0 0 0 / .45);
+}
+.settings[hidden] { display: none; }
+.settings fieldset { border: 0; margin-bottom: 12px; }
+.settings legend { font-size: 13px; font-weight: 700; color: var(--silk-dim); margin-bottom: 4px; }
+.settings label { display: flex; align-items: baseline; flex-wrap: wrap; gap: 0 8px; padding: 3px 0; cursor: pointer; }
+.settings input { accent-color: var(--gold); transform: translateY(1px); }
+.settings small { flex-basis: 100%; padding-left: 21px; font-size: 12px; color: var(--silk-dim); }
+.settings-note { font-size: 12px; color: var(--silk-dim); border-top: 1px solid var(--trace); padding-top: 8px; }
+
+/* Detail panel hidden: the board takes the whole width. */
+body.no-rail .bench { grid-template-columns: minmax(0, 1fr); }
+body.no-rail .rail { display: none; }
 
 .verdict h1 {
   font-size: clamp(24px, 2.6vw, 34px);
@@ -192,12 +229,10 @@ body.stale .rail { opacity: .45; }
 .rotor { display: block; width: 34px; height: 34px; color: var(--silk-dim); }
 [data-gpufan].off .rotor { opacity: .4; }
 .rotor svg { display: block; width: 100%; height: 100%; }
-/* Spinning: the animated image (wwwroot/fan-spin.png) replaces the still icon. */
+/* Spinning: an animated image (wwwroot/fan-slow|mid|fast.png) replaces the still icon. */
 .rotor .spin { display: none; width: 100%; height: 100%; }
 .rotor.spinning svg { display: none; }
 .rotor.spinning .spin { display: block; }
-[data-gpufan].off .rotor { opacity: .4; }
-.rotor .blades { transform-origin: 50% 50%; transform-box: fill-box; }
 
 /* ---------- RAM ---------- */
 .dimms {
@@ -431,7 +466,9 @@ body.stale .rail { opacity: .45; }
 
 @media (max-width: 760px) {
   .top { grid-template-columns: minmax(0, 1fr); padding: 14px 16px 12px; }
-  .mark, .fresh { padding-top: 0; }
+  .mark, .tools { padding-top: 0; }
+  .tools { flex-wrap: wrap; }
+  .settings { right: 16px; }
   .bench { padding: 0 16px 16px; }
   .board {
     grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);

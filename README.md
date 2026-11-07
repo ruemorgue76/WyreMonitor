@@ -44,6 +44,8 @@ part where it sits on the board and answers the question you opened it for:
 - Drives: temperature, used space and SSD remaining life
 - Battery charge and charging state on laptops
 - Alerts for high temperatures, stopped fans, worn SSDs and a nearly full Windows drive
+- Settings: °C or °F, values updated once or twice a second, fan icons spinning at their fan's
+  pace or still, and a detail panel you can hide. The window reopens where you left it
 - Own window and an icon next to the clock. It starts with Windows and opens without UAC prompts
 - No network access: the page is served only on `127.0.0.1`
 
@@ -126,7 +128,12 @@ so hardware support depends on it. Problems with missing or wrong readings belon
 with how WyreMonitor shows them belong in this repository's [issues](../../issues).
 
 **Can I show temperatures in Fahrenheit?**
-Not yet.
+Yes: open **Settings** at the top right and choose Fahrenheit.
+
+**How much CPU does it use?**
+Measured on a Threadripper 3960X with the window open: about 10 % of one core with the default
+settings, about 6.5 % with still fan icons, and about 17 % when updating twice a second. With the
+window closed, almost nothing.
 
 ## Build from source
 

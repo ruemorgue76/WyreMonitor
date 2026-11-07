@@ -3,9 +3,29 @@
 /* WyreMonitor dashboard. The page is a plan of the machine.
    Gold = how busy a part is. Colour = how close it is to its limit. */
 
-const POLL_MS = 1000;
 const REDUCED_MOTION = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const LOCALE = undefined;   // numbers and times follow the Windows regional settings
+
+// ---- Settings ------------------------------------------------------------------
+// Kept in the window's browser profile, which belongs to the Windows account. Every value is
+// checked against the few allowed ones, so a damaged entry falls back to the default.
+const SETTINGS_KEY = "wyremonitor.settings";
+const settings = loadSettings();
+
+function loadSettings() {
+  let saved = {};
+  try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) ?? "{}") ?? {}; } catch { /* defaults */ }
+  return {
+    unit: saved.unit === "F" ? "F" : "C",
+    rate: saved.rate === 2 ? 2 : 1,             // readings per second
+    fans: saved.fans === "still" ? "still" : "spin",
+    rail: saved.rail !== false,                 // detail panel shown
+  };
+}
+
+function saveSettings() {
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* kept for this session only */ }
+}
 
 // ---- Limits -------------------------------------------------------------------
 // Per part: the temperature that deserves attention (warn) and the critical one (crit).
@@ -32,6 +52,11 @@ const fixed = (v, digits = 0) =>
 const upTo = (v, digits = 1) =>
   new Intl.NumberFormat(LOCALE, { maximumFractionDigits: digits }).format(v);
 
+// Temperatures arrive and are compared in °C; only what is shown is converted.
+const toUnit = (c) => (settings.unit === "F" ? c * 9 / 5 + 32 : c);
+const degrees = () => (settings.unit === "F" ? "°F" : "°C");
+const temp = (c, digits = 0) => `${digits ? upTo(toUnit(c), digits) : fixed(toUnit(c))} ${degrees()}`;
+
 const formatBytes = (gb) => (gb >= 1000 ? `${upTo(gb / 1000, 2)} TB` : `${upTo(gb, gb < 100 ? 1 : 0)} GB`);
 
 function formatRate(bytesPerSecond) {
@@ -43,7 +68,7 @@ function formatRate(bytesPerSecond) {
 
 function formatValue(type, value, name = "") {
   switch (type) {
-    case "Temperature": return `${upTo(value, 1)} °C`;
+    case "Temperature": return temp(value, 1);
     case "Load":
     case "Level":
     case "Control": return `${upTo(value, value < 10 ? 1 : 0)} %`;
@@ -282,14 +307,32 @@ const ROTOR = `<span class="rotor" aria-hidden="true"><svg viewBox="0 0 40 40">
     <path d="M20 20c-7 3-14 2-17-4 5-3 12-1 17 4z"/>
   </g>
   <circle cx="20" cy="20" r="4" fill="#141a1a" stroke="currentColor"/>
-</svg><img class="spin" src="/fan-spin.png" alt="" /></span>`;
+</svg><img class="spin" alt="" /></span>`;
 
-// A spinning fan shows an animated image at a fixed speed; a stopped one shows the still icon.
-// An image redraws only its own few pixels, 12 times a second: a CSS or script animation made
-// the whole window redraw 60 times a second and tripled the app's CPU use.
+// A spinning fan shows an animated image turning slowly, at a medium pace or fast, by its RPM;
+// a stopped one shows the still icon. An image redraws only its own few pixels: a CSS or script
+// animation made the whole window redraw 60 times a second and tripled the app's CPU use.
+const FAN_STEPS = [900, 1600];   // RPM from which the icon turns at medium pace, then fast
+const FAN_IMAGES = ["/fan-slow.png", "/fan-mid.png", "/fan-fast.png"];
+
+function fanSpeed(rpm, current) {
+  // 50 RPM of hysteresis: a fan hovering on a step doesn't make its icon flicker between paces.
+  return FAN_STEPS.filter((step, i) => rpm >= step + (current > i ? -50 : 50)).length;
+}
+
 function setFanIcon(holder, rpm) {
-  holder?.querySelector(".rotor")?.classList.toggle("spinning", rpm > 0 && !REDUCED_MOTION);
-  holder?.classList.toggle("off", rpm <= 0);
+  const rotor = holder?.querySelector(".rotor");
+  if (!rotor) return;
+  holder.classList.toggle("off", rpm <= 0);
+  const spin = rpm > 0 && settings.fans === "spin" && !REDUCED_MOTION;
+  const current = rotor.dataset.speed ? +rotor.dataset.speed : -1;
+  const speed = spin ? String(fanSpeed(rpm, current)) : "";
+  if (rotor.dataset.speed === speed) return;
+  rotor.dataset.speed = speed;
+  rotor.classList.toggle("spinning", spin);
+  const img = rotor.querySelector(".spin");
+  if (spin) img.src = FAN_IMAGES[+speed];
+  else img.removeAttribute("src");
 }
 
 function buildDie(die) {
@@ -436,8 +479,6 @@ function buildBoard(m) {
       ${sata.length ? `<div class="store-row sata-row">${sata.map(([d, i]) => buildDrive(d, i)).join("")}</div>` : ""}
     </div>` : ""}`;
 
-  // The fan icons stay still on purpose: spinning them made the window redraw 60 times a
-  // second and tripled the app's CPU use. The RPM is written next to each one.
   drawTraces();
 }
 
@@ -519,7 +560,7 @@ function updateBoard(m) {
 
   if (m.cpu) {
     const limit = cpuLimits(m.cpu);
-    valueHtml($("cpuTemp"), s.cpuTemp == null ? null : fixed(s.cpuTemp), "°C", s.cpuTemp == null ? null : heat(s.cpuTemp, limit.warn));
+    valueHtml($("cpuTemp"), s.cpuTemp == null ? null : fixed(toUnit(s.cpuTemp)), degrees(), s.cpuTemp == null ? null : heat(s.cpuTemp, limit.warn));
     setText($("cpuLoad"), s.cpuLoad == null ? "n/a" : `${fixed(s.cpuLoad)} %`);
     setText($("cpuPower"), s.cpuPower == null ? "n/a" : `${fixed(s.cpuPower)} W`);
     const avg = find(m.cpu, "Clock", /^Cores \(Average\)$/)?.value ?? s.cpuClock;
@@ -534,7 +575,7 @@ function updateBoard(m) {
       const label = el.querySelector("[data-dielabel]");
       if (t && t.value > 0) {
         const c = heat(t.value, limit.warn);
-        setText(label, `${fixed(t.value)} °C`);
+        setText(label, temp(t.value));
         label.style.color = c;
         el.style.background = `color-mix(in srgb, ${c} 16%, #20282a)`;
       } else {
@@ -548,7 +589,7 @@ function updateBoard(m) {
     if (!el) continue;
     const r = gpuReadings(g);
     const q = (key) => el.querySelector(`[data-gpu="${key}"]`);
-    valueHtml(q("temp"), r.temp == null ? null : fixed(r.temp), "°C", r.temp == null ? null : heat(r.temp, LIMITS.gpu.warn));
+    valueHtml(q("temp"), r.temp == null ? null : fixed(toUnit(r.temp)), degrees(), r.temp == null ? null : heat(r.temp, LIMITS.gpu.warn));
     setText(q("load"), r.load == null ? "n/a" : `${fixed(r.load)} %`);
     bar(el.querySelector('[data-gpubar="load"]'), (r.load ?? 0) / 100);
     setText(q("vram"), r.vramUsed == null ? "n/a"
@@ -556,7 +597,7 @@ function updateBoard(m) {
     bar(el.querySelector('[data-gpubar="vram"]'), r.vramUsed != null && r.vramTotal ? r.vramUsed / r.vramTotal : 0);
     setText(q("power"), r.power == null ? "n/a" : `${fixed(r.power)} W`);
     const hotEl = q("hot");
-    setText(hotEl, r.hot == null ? "n/a" : `${fixed(r.hot)} °C`);
+    setText(hotEl, r.hot == null ? "n/a" : temp(r.hot));
     if (hotEl && r.hot != null) hotEl.style.color = heat(r.hot, LIMITS.gpuHot.warn);
     for (const f of r.fans) setFanIcon(el.querySelector(`[data-gpufan="${CSS.escape(f.id)}"]`), f.value);
   }
@@ -574,7 +615,7 @@ function updateBoard(m) {
     const t = g.sensors.find((x) => isRealTemp(x) && /^DIMM/.test(x.name)) ?? g.sensors.find(isRealTemp);
     if (!label) continue;
     if (t) {
-      setText(label, `${fixed(t.value)} °C`);
+      setText(label, temp(t.value));
       label.style.color = heat(t.value, LIMITS.dimm.warn);
     } else {
       const capacity = find(g, "Data", /^Capacity$/);
@@ -609,14 +650,14 @@ function updateBoard(m) {
     const hotEl = part.querySelector("[data-hot]");
     if (!temps.length) { valueHtml(hotEl, null, ""); continue; }
     const hot = Math.max(...temps.map((x) => x.value));
-    valueHtml(hotEl, fixed(hot), "°C", heat(hot, LIMITS.board.warn));
+    valueHtml(hotEl, fixed(toUnit(hot)), degrees(), heat(hot, LIMITS.board.warn));
     setText(part.querySelector("[data-probecount]"), `hottest of ${temps.length}`);
     const probes = part.querySelector("[data-probes]");
     if (probes.children.length !== temps.length) {
       probes.replaceChildren(...temps.map(() => document.createElement("span")));
     }
     temps.forEach((t, i) => {
-      setText(probes.children[i], `${fixed(t.value)}°`);
+      setText(probes.children[i], `${fixed(toUnit(t.value))}°`);
       probes.children[i].style.color = heat(t.value, LIMITS.board.warn);
       probes.children[i].title = sensorLabel(t.name);
     });
@@ -627,7 +668,7 @@ function updateBoard(m) {
     if (!el) return;
     const tempEl = el.querySelector(".drive-temp");
     if (d.temp) {
-      setText(tempEl, `${fixed(d.temp.value)} °C`);
+      setText(tempEl, temp(d.temp.value));
       tempEl.style.color = heat(d.temp.value, d.limit.warn);
     }
     el.querySelector(".meter i").style.transform = `scaleX(${(d.used?.value ?? 0) / 100})`;
@@ -656,10 +697,10 @@ function collectAlerts(m) {
   const add = (sev, title, detail, target) => alerts.push({ sev, title, detail, target });
   const s = m.snapshot.summary;
 
-  const checkTemp = (temp, limit, label, target) => {
-    if (temp == null) return;
-    if (temp >= limit.crit) add(2, `${label} at ${fixed(temp)} °C`, `Above the critical limit of ${limit.crit} °C.`, target);
-    else if (temp >= limit.warn) add(1, `${label} at ${fixed(temp)} °C`, `Above the warning threshold of ${limit.warn} °C.`, target);
+  const checkTemp = (value, limit, label, target) => {
+    if (value == null) return;
+    if (value >= limit.crit) add(2, `${label} at ${temp(value)}`, `Above the critical limit of ${temp(limit.crit)}.`, target);
+    else if (value >= limit.warn) add(1, `${label} at ${temp(value)}`, `Above the warning threshold of ${temp(limit.warn)}.`, target);
   };
 
   if (m.cpu) checkTemp(s.cpuTemp, cpuLimits(m.cpu), "CPU", m.cpu.name);
@@ -730,9 +771,9 @@ function updateVerdict(m) {
   const alerts = collectAlerts(m);
   if (!alerts.length) {
     const parts = [];
-    if (s.cpuTemp != null) parts.push(`CPU at ${fixed(s.cpuTemp)} °C`);
+    if (s.cpuTemp != null) parts.push(`CPU at ${temp(s.cpuTemp)}`);
     const gpuTemp = m.gpus.length ? gpuReadings(m.gpus[0]).temp : null;
-    if (gpuTemp != null) parts.push(`GPU at ${fixed(gpuTemp)} °C`);
+    if (gpuTemp != null) parts.push(`GPU at ${temp(gpuTemp)}`);
     if (m.fans.length) parts.push(`${m.fans.filter((f) => f.sensor.value > 0).length} of ${m.fans.length} fans spinning`);
     const text = parts.length ? `${parts.join(", ")}.` : "";
     renderVerdict("All clear", `<span>${esc(text)}</span>`, `ok:${text}`);
@@ -775,6 +816,8 @@ function defaultChart(g) {
 }
 
 function select(name, chartId) {
+  // Choosing a part means wanting its detail: bring the panel back if it was hidden.
+  if (!settings.rail) setRail(true);
   state.selected = name;
   const g = state.model.snapshot.hardware.find((h) => h.name === name);
   state.chartId = chartId ?? (g ? defaultChart(g) : null);
@@ -913,7 +956,9 @@ async function poll() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 2500);
   try {
-    const res = await fetch("/api/sensors", { cache: "no-store", signal: controller.signal });
+    // "fast" asks the service to read the sensors twice a second while this page polls.
+    const url = settings.rate === 2 ? "/api/sensors?fast=1" : "/api/sensors";
+    const res = await fetch(url, { cache: "no-store", signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const snapshot = await res.json();
     const m = readModel(snapshot);
@@ -950,7 +995,7 @@ async function poll() {
     setText($("fresh"), "");
   } finally {
     clearTimeout(timer);
-    setTimeout(poll, POLL_MS);
+    setTimeout(poll, 1000 / settings.rate);
   }
 }
 
@@ -975,12 +1020,72 @@ $("more").addEventListener("click", () => {
 });
 
 let resizeFrame = 0;
-new ResizeObserver(() => {
+const resized = new ResizeObserver(() => {
   cancelAnimationFrame(resizeFrame);
   resizeFrame = requestAnimationFrame(() => {
     drawTraces();
     if (state.model) updateRail();
   });
-}).observe(document.body);
+});
+resized.observe(document.body);
+resized.observe($("board"));   // hiding the detail panel widens the board, not the window
+
+// ---- Detail panel shown or hidden ------------------------------------------------
+function setRail(shown) {
+  settings.rail = shown;
+  saveSettings();
+  applyRail();
+}
+
+function applyRail() {
+  document.body.classList.toggle("no-rail", !settings.rail);
+  setText($("railToggle"), settings.rail ? "Hide detail" : "Show detail");
+  $("railToggle").setAttribute("aria-expanded", String(settings.rail));
+}
+
+$("railToggle").addEventListener("click", () => setRail(!settings.rail));
+
+// ---- Settings panel ---------------------------------------------------------------
+const settingsPanel = $("settings");
+
+function openSettings(open) {
+  settingsPanel.hidden = !open;
+  $("settingsToggle").setAttribute("aria-expanded", String(open));
+  if (open) {
+    for (const input of settingsPanel.querySelectorAll("input")) input.checked = String(settings[input.name]) === input.value;
+    settingsPanel.querySelector("input:checked")?.focus();
+  }
+}
+
+$("settingsToggle").addEventListener("click", () => openSettings(settingsPanel.hidden));
+
+settingsPanel.addEventListener("change", (e) => {
+  const { name, value } = e.target;
+  if (name === "unit") settings.unit = value === "F" ? "F" : "C";
+  else if (name === "rate") settings.rate = value === "2" ? 2 : 1;
+  else if (name === "fans") settings.fans = value === "still" ? "still" : "spin";
+  else return;
+  saveSettings();
+  // Redraw now with the new units and fan icons; a new pace applies from the next reading.
+  if (state.model) {
+    state.verdictKey = "";
+    updateBoard(state.model);
+    updateRail();
+    updateVerdict(state.model);
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !settingsPanel.hidden) {
+    openSettings(false);
+    $("settingsToggle").focus();
+  }
+});
+
+document.addEventListener("pointerdown", (e) => {
+  if (!settingsPanel.hidden && !e.target.closest("#settings, #settingsToggle")) openSettings(false);
+});
+
+applyRail();
 
 poll();

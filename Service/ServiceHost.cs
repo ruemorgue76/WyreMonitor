@@ -82,11 +82,11 @@ internal static class ServiceHost
             OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
         });
 
-        // The single data endpoint the page polls once per second. Requests also tell the
-        // service a page is open, so it reads sensors every second instead of rarely.
-        app.MapGet("/api/sensors", (HardwareMonitorService svc) =>
+        // The single data endpoint the page polls, once or twice per second. Requests also tell
+        // the service a page is open, so it reads sensors at that pace instead of rarely.
+        app.MapGet("/api/sensors", (HttpRequest request, HardwareMonitorService svc) =>
         {
-            svc.NoteClientActivity();
+            svc.NoteClientActivity(fast: request.Query["fast"] == "1");
             return Results.Json(svc.Latest, jsonOptions);
         });
 

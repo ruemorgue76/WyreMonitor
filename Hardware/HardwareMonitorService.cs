@@ -18,7 +18,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     private readonly object _updateLock = new();
     private Timer? _timer;
 
-    // Rolling history per sensor id: one sample per second, the last 60 seconds.
+    // Rolling history per sensor id: one sample per second, the last 60 seconds (PushHistory).
     private readonly ConcurrentDictionary<string, RingBuffer> _history = new();
 
     private volatile Snapshot _latest = Snapshot.Empty;
@@ -30,19 +30,34 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     // runs all the time, and nobody is looking.
     private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ClientTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan FastTimeout = TimeSpan.FromSeconds(3);
     private static readonly TimeSpan IdleStop = TimeSpan.FromSeconds(60);
+    private static readonly TimeSpan Tolerance = TimeSpan.FromMilliseconds(100);
     private readonly Dictionary<IHardware, DateTime> _lastUpdate = new();
     private readonly HashSet<IHardware> _neverUpdate = new();
     private DateTime _lastPoll = DateTime.MinValue;
+    private DateTime _lastSample = DateTime.MinValue;
     private long _lastClientRequest;   // Environment.TickCount64 of the page's last request
+    private long _lastFastRequest;     // ... of the last request asking for two readings a second
 
     public Snapshot Latest => _latest;
 
-    /// <summary>Called on every page request: while a page is open, sensors are read every second.</summary>
-    public void NoteClientActivity() => Interlocked.Exchange(ref _lastClientRequest, Environment.TickCount64);
+    /// <summary>
+    /// Called on every page request: while a page is open, sensors are read every second, or
+    /// every half second when the page asks for it (<paramref name="fast"/>).
+    /// </summary>
+    public void NoteClientActivity(bool fast)
+    {
+        var now = Environment.TickCount64;
+        Interlocked.Exchange(ref _lastClientRequest, now);
+        if (fast) Interlocked.Exchange(ref _lastFastRequest, now);
+    }
 
-    private bool ClientActive =>
-        Environment.TickCount64 - Interlocked.Read(ref _lastClientRequest) < ClientTimeout.TotalMilliseconds;
+    private static bool Within(ref long since, TimeSpan window) =>
+        Environment.TickCount64 - Interlocked.Read(ref since) < window.TotalMilliseconds;
+
+    private bool ClientActive => Within(ref _lastClientRequest, ClientTimeout);
+    private bool FastActive => Within(ref _lastFastRequest, FastTimeout);
 
     public bool IsElevated { get; }
 
@@ -78,7 +93,8 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
                 _systemDrive = FindSystemDriveModel();
                 _computer.Open();
                 Poll();
-                _timer = new Timer(_ => Tick(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+                // Ticks every half second; Tick decides whether this one reads anything.
+                _timer = new Timer(_ => Tick(), null, TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
             }
             catch (Exception ex)
             {
@@ -88,32 +104,39 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>Every second while a page is open, every IdleInterval for a minute after, then not at all.</summary>
+    /// <summary>
+    /// Every half second while a page asks for it, every second while a page is open, every
+    /// IdleInterval for a minute after, then not at all.
+    /// </summary>
     private void Tick()
     {
-        if (!ClientActive)
+        var fast = FastActive;
+        var sincePoll = DateTime.UtcNow - _lastPoll;
+        if (fast) { Poll(fast: true); return; }
+        if (ClientActive)
         {
-            var sinceClient = TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastClientRequest));
-            if (sinceClient > IdleStop) return;
-            if (DateTime.UtcNow - _lastPoll < IdleInterval - TimeSpan.FromMilliseconds(100)) return;
+            if (sincePoll >= TimeSpan.FromSeconds(1) - Tolerance) Poll(fast: false);
+            return;
         }
-        Poll();
+        var sinceClient = TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastClientRequest));
+        if (sinceClient > IdleStop) return;
+        if (sincePoll >= IdleInterval - Tolerance) Poll(fast: false);
     }
 
     /// <summary>How often a part is read. Temperatures of drives and memory modules move slowly.</summary>
-    private static TimeSpan IntervalFor(IHardware hw) => hw.HardwareType switch
+    private static TimeSpan IntervalFor(IHardware hw, bool fast) => hw.HardwareType switch
     {
         HardwareType.Storage => TimeSpan.FromSeconds(10),
         HardwareType.Memory when hw.Name.EndsWith(')') && hw.Name.Contains("(#") => TimeSpan.FromSeconds(5),
-        _ => TimeSpan.FromSeconds(1),
+        _ => fast ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(1),
     };
 
-    private void UpdateHardware(DateTime now)
+    private void UpdateHardware(DateTime now, bool fast)
     {
         foreach (var hw in _computer.Hardware)
         {
             if (_neverUpdate.Contains(hw)) continue;
-            if (_lastUpdate.TryGetValue(hw, out var last) && now - last < IntervalFor(hw) - TimeSpan.FromMilliseconds(100)) continue;
+            if (_lastUpdate.TryGetValue(hw, out var last) && now - last < IntervalFor(hw, fast) - Tolerance) continue;
 
             hw.Update();
             foreach (var sub in hw.SubHardware) sub.Update();
@@ -128,26 +151,30 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         }
     }
 
-    private void Poll()
+    private void Poll(bool fast = false)
     {
         // Timer callbacks can overlap on slow hardware; skip if a poll is in flight.
         if (!Monitor.TryEnter(_updateLock)) return;
         try
         {
             var now = DateTime.UtcNow;
-            // The history holds one sample per second: after a slow (idle) poll, the value is
-            // repeated for the seconds that passed, so the chart's time axis stays true.
-            var gap = now - _lastPoll;
-            var samples = _lastPoll == DateTime.MinValue ? 1 : (int)Math.Clamp(Math.Round(gap.TotalSeconds), 1, 10);
             // After a pause in reading, the old history no longer describes the last minute.
-            if (_lastPoll != DateTime.MinValue && gap > IdleStop)
+            if (_lastPoll != DateTime.MinValue && now - _lastPoll > IdleStop)
             {
                 _history.Clear();
-                samples = 1;
+                _lastSample = DateTime.MinValue;
             }
             _lastPoll = now;
 
-            UpdateHardware(now);
+            // The history holds one sample per second whatever the reading pace: two readings
+            // a second add one sample every other time, and after a slow (idle) reading the value
+            // is repeated for the seconds that passed, so the chart's time axis stays true.
+            var samples = _lastSample == DateTime.MinValue
+                ? 1
+                : (int)Math.Clamp(Math.Floor((now - _lastSample + Tolerance).TotalSeconds), 0, 10);
+            if (samples > 0) _lastSample = now;
+
+            UpdateHardware(now, fast);
 
             var groups = new List<HardwareGroup>();
             foreach (var hw in _computer.Hardware)

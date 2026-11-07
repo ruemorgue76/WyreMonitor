@@ -30,6 +30,7 @@ internal sealed class MainWindow : Form
 
         var screen = Screen.PrimaryScreen?.WorkingArea ?? new Rectangle(0, 0, 1600, 950);
         Size = new Size(Math.Min(1680, screen.Width - 40), Math.Min(1000, screen.Height - 40));
+        WindowPlacement.Restore(this);
 
         Controls.Add(_web);
         _retry.Tick += async (_, _) => await ConnectAsync();
@@ -138,6 +139,12 @@ internal sealed class MainWindow : Form
         starts this can take a few seconds. If this page stays, open Services, find WyreMonitor and start it,
         or reinstall WyreMonitor.</p></div></body></html>
         """;
+
+    protected override void OnFormClosing(FormClosingEventArgs e)
+    {
+        base.OnFormClosing(e);
+        if (!e.Cancel) WindowPlacement.Save(this);
+    }
 
     protected override void OnFormClosed(FormClosedEventArgs e)
     {

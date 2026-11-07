@@ -52,6 +52,11 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "autostart"; Description: "Show the WyreMonitor icon next to the clock when I sign in"
 Name: "desktopicon"; Description: "Create a desktop shortcut"
 
+[InstallDelete]
+; The page's files are replaced as a whole on every update: files a newer version dropped
+; (an old image, say) must not stay behind and keep being served.
+Type: filesandordirs; Name: "{app}\wwwroot"
+
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
