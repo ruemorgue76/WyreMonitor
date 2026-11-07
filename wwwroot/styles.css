@@ -967,3 +967,43 @@ body[data-theme="white"] .part.cpu .screw { --mask: #e4e8e1; }
 .probes { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 12px; margin-top: 8px; }
 .probes span { display: contents; }
 .probes span::before { content: attr(data-p); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- 1.5: other machines (simulated PCs) ---------- */
+/* A drive's temperature never wraps; the name gives way. */
+.drive-temp { flex: none; white-space: nowrap; }
+.drive-name { min-width: 0; }
+/* Few fans do not stretch into long bars: a fan card is at most 240px wide. */
+.bank { max-width: calc(var(--n) * 240px + (var(--n) - 1) * 8px); }
+/* A bank of many fans wraps inside its own courtyard instead of widening the page. */
+.bank { min-width: 0; }
+
+/* ---------- 1.5: parts sized to what they hold ---------- */
+/* A part grows with the room it has only up to a sensible size; past that it keeps its shape
+   and the board shows around it, as on a real board where a small chip stays small. */
+/* One-die CPUs: the die is drawn at its own size inside the package, not stretched to fill it. */
+.cpu.single .die-col { justify-content: center; align-items: center; }
+.cpu.single .ccd { flex: 0 0 auto; max-width: 100%; }
+.cpu.single .cores { grid-template-columns: repeat(var(--cols, 6), minmax(0, 64px)); grid-auto-rows: 84px; }
+/* Graphics card readings stay together instead of spreading across a wide card. */
+.gpu-stats { grid-template-columns: repeat(auto-fit, minmax(124px, 200px)); }
+/* A lone drive is not as wide as the board. */
+.m2-row:has(> .drive:only-child), .sata-row:has(> .drive:only-child) { grid-template-columns: minmax(0, 560px); }
+/* A fan that stopped while the window was open: alert outline and text. */
+.fan.alarm { outline: 1px solid var(--alert); outline-offset: -1px; }
+.fan.alarm .val { color: var(--alert); font-weight: 700; }
+@media (max-width: 760px) {
+  .m2-row, .sata-row { grid-template-columns: minmax(0, 1fr); }
+  .cpu.single .cores { grid-auto-rows: 64px; }
+}
+/* The board is as wide as its parts need (app.js sets --fit), never wider than the window. */
+.board-wrap { max-width: var(--fit, none); width: 100%; }
+@media (max-width: 760px) { .board-wrap { max-width: none; } }
+/* Wide windows: the detail panel sits right beside the board, whatever the board's size. */
+@media (min-width: 1241px) {
+  .bench { grid-template-columns: minmax(0, var(--fit, 1fr)) 390px; justify-content: start; }
+  body.no-rail .bench { grid-template-columns: minmax(0, var(--fit, 1fr)); }
+}
+/* A one-die CPU is as tall as what it holds (memory sticks beside it still set the row's height),
+   its die next to the readings rather than floating in the middle. */
+.cpu.single { min-height: 0; }
+.cpu.single .die-col { align-items: flex-start; }

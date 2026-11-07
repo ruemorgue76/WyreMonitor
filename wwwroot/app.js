@@ -160,7 +160,8 @@ const SENSOR_NAMES = [
   [/^Memory$/, "Usage"],
   [/^Core \(Tctl\/Tdie\)$/, "CPU temperature"],
   [/^Core \(Tctl\)$/, "CPU temperature"],
-  [/^CPU Package$/, "CPU temperature"],
+  [/^CPU Package$/, "CPU temperature", "Temperature"],   // Intel names the power reading the same
+  [/^CPU Package$/, "Whole package"],
   [/^CCD(\d+) \(Tdie\)$/, "Chiplet CCD$1"],
   [/^CCDs Max \(Tdie\)$/, "Hottest chiplet"],
   [/^CCDs Average \(Tdie\)$/, "Chiplet average"],
@@ -172,9 +173,10 @@ const SENSOR_NAMES = [
   [/^GPU Memory Junction$/, "Memory junction"],
 ];
 
-function sensorLabel(name) {
-  for (const [pattern, label] of SENSOR_NAMES) {
-    if (pattern.test(name)) return name.replace(pattern, label);
+// A third entry limits a name to one kind of reading.
+function sensorLabel(name, type) {
+  for (const [pattern, label, only] of SENSOR_NAMES) {
+    if ((!only || only === type) && pattern.test(name)) return name.replace(pattern, label);
   }
   return name;
 }
@@ -244,19 +246,19 @@ const limit = (key, cpu) => settings.alerts.limits[key] ?? defaultLimit(key, cpu
 const cpuLimits = (cpu) => limit("cpu", cpu);
 
 // Names chosen by the user win over the library's.
-const displayName = (s) => settings.names[s.id] ?? sensorLabel(s.name);
+const displayName = (s) => settings.names[s.id] ?? sensorLabel(s.name, s.type);
 const fanName = (f) => settings.names[f.sensor.id] ?? `Fan ${f.label}`;
 const shown = (key) => !settings.hidden.includes(key);
 
 function shortCpuName(name) {
   return name.replace(/^AMD /, "").replace(/^Intel\(R\) Core\(TM\) /, "Core ").replace(/^Intel /, "")
-    .replace(/\(R\)|\(TM\)/g, "").replace(/ CPU @.*$/, "").replace(/ \d+-Core Processor$/, "").trim();
+    .replace(/\(R\)|\(TM\)/g, "").replace(/ CPU @.*$/, "").replace(/ \d+-Core Processor$/, "").replace(/ w\/ Radeon.*$/, "").trim();
 }
 
 const shortGpuName = (name) => name.replace(/^(NVIDIA|AMD|Intel\(R\)) /, "").replace(/^GeForce /, "")
   .replace(/^Radeon\(TM\) /, "Radeon ").replace(/\(R\)|\(TM\)/g, "").trim();
 
-const shortDriveName = (name) => name.replace(/^Samsung SSD /, "").replace(/^WDC (WD\w+)-\w+$/, "$1");
+const shortDriveName = (name) => name.replace(/^Samsung SSD /, "").replace(/^WDC (WD\w+)-\w+$/, "$1").replace(/_/g, " ");
 
 // CCD temperatures: present on Ryzen and Threadripper, one per chiplet. The active chiplets
 // are not always numbered in sequence (a 3960X reports CCD1, CCD3, CCD5 and CCD7).
@@ -320,7 +322,11 @@ function readModel(snapshot) {
     if (!total || total.value === 0) { hiddenReaders++; continue; }
     const temps = g.sensors.filter(isRealTemp);
     const life = find(g, "Level", /^Life$/);
-    const kind = temps.length > 1 || /nvme/i.test(g.name) ? "nvme" : life ? "ssd" : "hdd";
+    // NVMe drives report several probes, or the limits and read counter of the NVMe health log;
+    // SATA SSDs report a life left, hard disks neither.
+    const nvme = temps.length > 1 || /nvme/i.test(g.name)
+      || g.sensors.some((x) => /^(Warning Temperature|Data Read|Available Spare)$/.test(x.name));
+    const kind = nvme ? "nvme" : life ? "ssd" : "hdd";
     drives.push({
       group: g,
       kind,
@@ -343,8 +349,9 @@ function readModel(snapshot) {
 
   const cpu = hw.find((h) => h.type === "Cpu");
   // Discrete cards first: on laptops the integrated GPU is listed too.
-  const gpuRank = (t) => (t === "GpuNvidia" || t === "GpuAmd" ? 0 : 1);
-  const gpus = hw.filter((h) => h.type.startsWith("Gpu")).sort((a, b) => gpuRank(a.type) - gpuRank(b.type));
+  // Graphics cards with their own memory first (on a laptop, the discrete one), integrated after.
+  const gpuRank = (g) => (g.sensors.some((x) => x.name === "GPU Memory Total") ? 0 : 1) + (g.type === "GpuIntel" ? 1 : 0);
+  const gpus = hw.filter((h) => h.type.startsWith("Gpu")).sort((a, b) => gpuRank(a) - gpuRank(b));
   const memory = hw.find((h) => h.type === "Memory" && h.name === "Total Memory")
     ?? hw.find((h) => h.type === "Memory" && !/Virtual|\(#\d+\)$/.test(h.name));
   const dimms = hw.filter((h) => h.type === "Memory" && /\(#\d+\)$/.test(h.name));
@@ -539,6 +546,38 @@ function boardChip(g, i, all) {
   </button>`;
 }
 
+// How wide the board needs to be for what this machine has, as a real board's size follows its
+// parts: a 4-core PC with two sticks gets a small board, a workstation the whole window. Each row
+// is measured at a comfortable size, the widest one sets the board, with a little room to breathe.
+function boardFit(m) {
+  const px = (v) => parseInt(v, 10) || 0;
+  const side = 190 + 28, pad = 52;
+  const rows = [760];
+  if (m.fans.length) rows.push(m.fans.length * 150 + pad);
+  if (m.cpu) {
+    const dies = cpuLayout(m.cpu);
+    const cols = Math.max(...dies.map((d) => Math.ceil(d.cores.length / (d.cores.length <= 8 ? 1 : d.cores.length <= 32 ? 2 : 3))));
+    const dimms = m.dimms.length ? 2 * (px(dimmWidth(m)) || 112) + 56 : 0;
+    const cpu = dies.length > 1
+      ? 172 + 2 * (cols * 40 + (cols - 1) * 9 + 16)
+      : 214 + cols * 64 + (cols - 1) * 9;
+    rows.push(dimms + cpu + side + pad);
+  }
+  for (const g of m.gpus) {
+    const r = gpuReadings(g);
+    const stats = [r.load, r.vramUsed, r.power, r.hot].filter((v) => v !== null).length;
+    rows.push(192 + r.fans.length * 74 + stats * 150 + side + pad);
+  }
+  const nvme = m.drives.filter((d) => d.kind === "nvme").length;
+  rows.push(nvme * 380 + pad, (m.drives.length - nvme) * 240 + pad);
+  return Math.round(Math.max(...rows) * 1.15);
+}
+
+function dimmWidth(m) {
+  const per = Math.ceil(m.dimms.length / 2);
+  return per === 1 ? "64px" : per === 2 ? "var(--dimm)" : `${per * 46 + (per - 1) * 10}px`;
+}
+
 // The board's grid depends on which parts this machine has: absent parts take no space.
 function boardLayout(m) {
   const hasDimms = m.dimms.length > 0;
@@ -550,12 +589,16 @@ function boardLayout(m) {
 
   const width = hasDimms ? 4 : 2;
   const desktop = rows.map((r) => `"${(r.length === 1 ? Array(width).fill(r[0]) : r).join(" ")}"`).join(" ");
-  const mobile = [["brand", "brand"], m.fans.length && ["fans", "fans"], ["cpu", "cpu"], hasDimms && ["dl", "dr"],
+  // On a phone two sticks a side share a row; four a side get a row each.
+  const wideDimms = Math.ceil(m.dimms.length / 2) > 2;
+  const mobile = [["brand", "brand"], m.fans.length && ["fans", "fans"], ["cpu", "cpu"],
+    hasDimms && (wideDimms ? ["dl", "dl"] : ["dl", "dr"]), hasDimms && wideDimms && ["dr", "dr"],
     m.gpus.length && ["gpu", "gpu"], ["side", "side"], m.drives.length && ["store", "store"]]
     .filter(Boolean).map((r) => `"${r.join(" ")}"`).join(" ");
   return {
     areas: desktop,
-    columns: hasDimms ? "var(--dimm) minmax(0, 1fr) var(--dimm) 190px" : "minmax(0, 1fr) 210px",
+    // Each memory column is as wide as its sticks: two fit the base width, four need more.
+    columns: hasDimms ? `${dimmWidth(m)} minmax(0, 1fr) ${dimmWidth(m)} 190px` : "minmax(0, 1fr) 210px",
     mobile,
   };
 }
@@ -571,6 +614,7 @@ function buildBoard(m) {
   board.style.setProperty("--areas", layout.areas);
   board.style.setProperty("--columns", layout.columns);
   board.style.setProperty("--areas-mobile", layout.mobile);
+  document.body.style.setProperty("--fit", `${boardFit(m)}px`);
 
   board.innerHTML = `
     <svg class="traces" id="traces" aria-hidden="true"></svg>
@@ -794,6 +838,8 @@ function updateBoard(m) {
     // quiet. "Stopped" is kept for a fan that was turning.
     const spun = state.spun.has(f.sensor.id);
     el.classList.toggle("empty", !on && !spun);
+    // A fan that was turning and stopped is an alert: it stands out on the board too.
+    el.classList.toggle("alarm", !on && spun && settings.alerts.fans);
     setFanIcon(el, f.sensor.value);
     const text = on ? `${fixed(f.sensor.value)} RPM` : spun ? "Stopped" : "0 rpm";
     setText(el.querySelector(".val"), text);
@@ -1142,7 +1188,7 @@ function renderRail() {
 
   // Renaming: each sensor becomes a text field; left empty, it goes back to its own name.
   const row = (s) => state.renaming
-    ? `<label class="sensor renaming"><span class="visually-hidden">Name for ${esc(sensorLabel(s.name))}</span>
+    ? `<label class="sensor renaming"><span class="visually-hidden">Name for ${esc(sensorLabel(s.name, s.type))}</span>
         <input type="text" data-rename="${esc(s.id)}" maxlength="${MAX_NAME}" value="${esc(settings.names[s.id] ?? "")}"
           placeholder="${esc(defaultName(s))}" /></label>`
     : `<button type="button" class="sensor" data-id="${esc(s.id)}" aria-pressed="false">
@@ -1193,7 +1239,7 @@ function updateRail() {
 // A board fan is named as on its tile ("Fan A1", or the user's name); other sensors by their
 // user's name or their own.
 function boardFan(sensor) { return state.model.fans.find((f) => f.sensor.id === sensor.id); }
-function defaultName(sensor) { const f = boardFan(sensor); return f ? `Fan ${f.label}` : sensorLabel(sensor.name); }
+function defaultName(sensor) { const f = boardFan(sensor); return f ? `Fan ${f.label}` : sensorLabel(sensor.name, sensor.type); }
 function shownName(sensor) { const f = boardFan(sensor); return f ? fanName(f) : displayName(sensor); }
 
 // What "Hide from the board" hides: the fan shown in the chart when it came from a fan tile,

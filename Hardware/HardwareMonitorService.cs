@@ -295,7 +295,9 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         double maxFan = 0;
         bool anyFan = false;   // distinguishes "0 RPM" from "no fan sensor at all"
 
-        foreach (var g in groups)
+        // Graphics cards with their own memory first: on a laptop the summary is the discrete one's.
+        var ordered = groups.OrderBy(g => g.Type.StartsWith("Gpu") && !g.Sensors.Any(s => s.Name == "GPU Memory Total") ? 1 : 0);
+        foreach (var g in ordered)
         {
             var isCpu = g.Type == "Cpu";
             var isGpu = g.Type.StartsWith("Gpu");
