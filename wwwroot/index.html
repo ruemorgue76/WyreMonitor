@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="color-scheme" content="dark" />
+  <title>WyreMonitor</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect width='16' height='16' rx='2' fill='%23123a32'/%3E%3Crect x='4' y='4' width='8' height='8' fill='%23d8b45a'/%3E%3C/svg%3E" />
+  <link rel="preload" href="/fonts/b612-400.woff2" as="font" type="font/woff2" crossorigin />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="top">
+    <p class="mark">WyreMonitor</p>
+    <div class="verdict" id="verdict" aria-live="polite">
+      <h1 id="verdictTitle">Reading sensors</h1>
+      <div id="verdictBody" class="verdict-body"></div>
+    </div>
+    <p class="fresh" id="fresh"></p>
+  </header>
+
+  <main class="bench">
+    <section class="board-wrap" aria-label="Plan of the machine">
+      <div class="board" id="board"></div>
+      <div class="key">
+        <span class="key-item"><i class="key-gold"></i>Gold: how busy it is</span>
+        <span class="key-item"><i class="key-heat"></i>Colour: how close it is to its limit</span>
+        <span class="key-item" id="keyHidden"></span>
+      </div>
+    </section>
+
+    <aside class="rail" aria-label="Detail of the selected part">
+      <h2 id="railTitle"></h2>
+      <p class="rail-sub" id="railSub"></p>
+      <div class="scope">
+        <p class="scope-name" id="scopeName"></p>
+        <p class="scope-value" id="scopeValue"></p>
+        <canvas id="scope" height="130" role="img" aria-label="The selected sensor over the last 60 seconds"></canvas>
+        <p class="scope-foot"><span>Last 60 seconds</span><span id="scopeRange"></span></p>
+      </div>
+      <div class="sensors" id="sensors"></div>
+      <button type="button" class="more" id="more" hidden></button>
+    </aside>
+  </main>
+
+  <script src="/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,51 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+
+  <PropertyGroup>
+    <!-- Desktop app: Windows-only target, no console window. -->
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <OutputType>WinExe</OutputType>
+    <UseWindowsForms>true</UseWindowsForms>
+    <Version>1.0.0</Version>
+    <ApplicationIcon>app.ico</ApplicationIcon>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <!-- LibreHardwareMonitor's kernel driver is x64; force the platform. -->
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <!-- The exe starts unelevated and obtains admin rights itself: see Desktop/Launcher.cs. -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <AssemblyName>WyreMonitor</AssemblyName>
+    <RootNamespace>WyreMonitor</RootNamespace>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <!-- Windows-only APIs (WindowsIdentity) are intentional; this app never runs elsewhere. -->
+    <NoWarn>$(NoWarn);CA1416</NoWarn>
+    <!-- WebView2 also ships a WPF assembly that this WinForms app never loads: its
+         WindowsBase version conflict is harmless. -->
+    <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
+    <!-- Build outputs live inside the project: never treat them as source. -->
+    <DefaultItemExcludes>$(DefaultItemExcludes);dist\**;publish\**;installer\**</DefaultItemExcludes>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- WinForms namespaces clash with web and threading types (Timer): import them per file. -->
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 0.9.7 prerelease adds PawnIO support: reads CPU SMU + Super-I/O with
+         Windows Memory Integrity (HVCI) enabled, where WinRing0 is blocked. -->
+    <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.7-pre705" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <!-- Finds the disk Windows runs from (already a dependency of LibreHardwareMonitorLib). -->
+    <PackageReference Include="System.Management" Version="10.0.9" />
+  </ItemGroup>
+
+  <!-- Copy wwwroot next to the binary so static files are served even when the
+       app runs from bin/ in the Production environment (not just via publish). -->
+  <ItemGroup>
+    <Content Update="wwwroot\**\*" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

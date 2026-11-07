@@ -1,0 +1,450 @@
+@font-face {
+  font-family: "B612";
+  src: url("/fonts/b612-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "B612";
+  src: url("/fonts/b612-700.woff2") format("woff2");
+  font-weight: 700;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  /* Printed circuit board materials */
+  --mask: #0c2a25;        /* solder mask, page background */
+  --mask-up: #123a32;     /* solder mask of the board */
+  --trace: #26695a;       /* copper traces under the mask */
+  --epoxy: #141a1a;       /* black body of the components */
+  --epoxy-up: #20282a;
+  --silk: #f0f1e4;        /* silkscreen */
+  --silk-dim: #a9c4b9;
+  --gold: #d8b45a;        /* pads: how busy a part is */
+  --gold-dim: #33403a;
+  --alert: #ff8a5c;
+
+  --font: "B612", "Segoe UI", system-ui, sans-serif;
+  --step: 16px;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { background: var(--mask); }
+
+body {
+  min-height: 100vh;
+  background: var(--mask);
+  color: var(--silk);
+  font: 400 14px/1.45 var(--font);
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  cursor: pointer;
+  text-align: left;
+}
+
+:focus-visible {
+  outline: 2px solid var(--silk);
+  outline-offset: 2px;
+}
+
+/* ---------- Verdict ---------- */
+.top {
+  display: grid;
+  grid-template-columns: 130px minmax(0, 1fr) auto;
+  gap: 4px var(--step);
+  align-items: start;
+  padding: 20px 24px 16px;
+}
+.mark { color: var(--silk-dim); font-size: 14px; padding-top: 9px; }
+.fresh { color: var(--silk-dim); font-size: 13px; padding-top: 10px; white-space: nowrap; }
+
+.verdict h1 {
+  font-size: clamp(24px, 2.6vw, 34px);
+  line-height: 1.2;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+}
+.verdict-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 20px;
+  margin-top: 4px;
+  color: var(--silk-dim);
+  max-width: 80ch;
+}
+.alert-link {
+  color: var(--silk);
+  text-decoration: underline;
+  text-decoration-color: var(--alert);
+  text-decoration-thickness: 2px;
+  text-underline-offset: 3px;
+}
+.alert-link:hover { color: var(--alert); }
+
+body.stale .board-wrap,
+body.stale .rail { opacity: .45; }
+
+/* ---------- Bench: board + detail ---------- */
+.bench {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 390px;
+  gap: 20px;
+  align-items: start;
+  padding: 0 24px 24px;
+}
+
+/* ---------- The board ---------- */
+.board-wrap { container-type: inline-size; min-width: 0; }
+.board {
+  --dimm: 58px;
+  position: relative;
+  display: grid;
+  /* Set by app.js from the parts this machine has: absent parts take no space. */
+  grid-template-columns: var(--columns, minmax(0, 1fr) 210px);
+  grid-template-areas: var(--areas, "brand brand");
+  gap: 16px 28px;
+  padding: 18px 26px 26px;
+  background: var(--mask-up);
+  border: 1px solid var(--trace);
+  border-radius: 6px;
+}
+/* Mounting holes: gold rings in the corners */
+.board::before,
+.board::after {
+  content: "";
+  position: absolute;
+  top: 8px;
+  width: 11px;
+  height: 11px;
+  border: 2px solid var(--gold);
+  border-radius: 50%;
+  background: var(--mask);
+}
+.board::before { left: 8px; }
+.board::after { right: 8px; }
+
+.traces {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+.traces path {
+  fill: none;
+  stroke: var(--trace);
+  stroke-width: 2;
+}
+
+.brand {
+  grid-area: brand;
+  position: relative;
+  color: var(--silk-dim);
+  font-size: 13px;
+  padding-left: 14px;
+}
+
+/* Every clickable part */
+.part {
+  position: relative;
+  display: block;
+  background: var(--epoxy);
+  border-radius: 3px;
+}
+.part:hover { background: var(--epoxy-up); }
+.part[aria-pressed="true"] { outline: 2px solid var(--gold); outline-offset: 2px; }
+.part:focus-visible { outline: 2px solid var(--silk); outline-offset: 2px; }
+
+.designator { display: block; font-size: 12px; color: var(--silk-dim); line-height: 1.3; }
+.big { font-size: 40px; font-weight: 700; line-height: 1.05; letter-spacing: -0.02em; }
+.unit { font-size: .5em; font-weight: 400; letter-spacing: 0; margin-left: 2px; }
+.nd { color: var(--silk-dim); }
+
+/* ---------- Fans ---------- */
+.fans {
+  grid-area: fans;
+  position: relative;
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(118px, 1fr));
+  gap: 8px;
+}
+.fan {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  gap: 0 8px;
+  align-items: center;
+  padding: 6px 8px;
+}
+.fan.off { background: transparent; box-shadow: inset 0 0 0 1px var(--trace); }
+.fan.off .rotor { opacity: .4; }
+.fan .val { display: block; font-size: 14px; font-weight: 700; white-space: nowrap; }
+.fan.off .val { font-weight: 400; color: var(--silk-dim); }
+.rotor { display: block; width: 34px; height: 34px; color: var(--silk-dim); }
+.rotor svg { display: block; width: 100%; height: 100%; }
+.rotor .blades { transform-origin: 50% 50%; transform-box: fill-box; }
+
+/* ---------- RAM ---------- */
+.dimms {
+  position: relative;
+  display: flex;
+  gap: 8px;
+  min-height: 292px;
+}
+.dimms.l { grid-area: dl; }
+.dimms.r { grid-area: dr; }
+.dimm {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 2px;
+  border-bottom: 5px solid var(--gold);
+}
+.dimm .temp { font-size: 12px; font-weight: 700; writing-mode: vertical-rl; transform: rotate(180deg); }
+.dimm .designator { writing-mode: vertical-rl; transform: rotate(180deg); }
+
+/* ---------- CPU: chiplets around the I/O die ---------- */
+.cpu {
+  grid-area: cpu;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 136px minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid #39423f;
+  min-height: 292px;
+}
+.cpu.single { grid-template-columns: 170px minmax(0, 1fr); }
+.die-col { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.ccd {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 7px 8px 8px;
+  min-width: 0;
+  border-radius: 2px;
+  background: var(--epoxy-up);
+}
+.ccd-head { display: flex; justify-content: space-between; font-size: 12px; }
+.ccd-head b { font-weight: 700; }
+.cores {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 6), minmax(0, 1fr));   /* --cols set per die by app.js */
+  grid-auto-rows: 1fr;
+  gap: 6px 9px;
+  flex: 1;
+}
+.core { display: flex; gap: 2px; min-height: 30px; }
+.th {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: block;
+  background: var(--gold-dim);
+}
+.th i {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: var(--gold);
+  transform: scaleY(0);
+  transform-origin: bottom;
+  transition: transform .4s linear;
+}
+.iod {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 5px;
+  padding: 6px 12px;
+  min-width: 0;
+}
+.iod .stat { display: block; font-size: 13px; color: var(--silk-dim); white-space: nowrap; }
+.iod .stat b { color: var(--silk); font-weight: 700; }
+
+/* ---------- GPUs ---------- */
+.gpus {
+  grid-area: gpu;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.gpu {
+  display: grid;
+  grid-template-columns: auto auto minmax(0, 1fr);
+  gap: 20px;
+  align-items: center;
+  padding: 10px 16px 18px;
+  border: 1px solid #39423f;
+}
+/* PCIe edge connector */
+.gpu::after {
+  content: "";
+  position: absolute;
+  left: 8%;
+  right: 34%;
+  bottom: 3px;
+  height: 7px;
+  background: repeating-linear-gradient(90deg, var(--gold) 0 4px, transparent 4px 7px);
+}
+/* Laptop GPUs usually report no fans */
+.gpu:not(:has(.gpu-fans)) { grid-template-columns: auto minmax(0, 1fr); }
+.big .nd { font-size: 24px; }
+.gpu-fans { display: flex; gap: 10px; }
+.gpu-fans .rotor { width: 64px; height: 64px; }
+.gpu-stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(124px, 1fr)); gap: 4px 18px; }
+.stat-cell .designator { font-size: 12px; }
+.stat-cell b { font-size: 16px; font-weight: 700; white-space: nowrap; }
+.meter { display: block; height: 5px; background: var(--gold-dim); margin-top: 3px; overflow: hidden; }
+.meter i { display: block; height: 100%; width: 100%; background: var(--gold); transform: scaleX(0); transform-origin: left; transition: transform .4s linear; }
+
+/* ---------- Side column: memory, battery, board probes ---------- */
+.side {
+  grid-area: side;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.chip { display: flex; flex-direction: column; justify-content: flex-start; padding: 10px 12px; }
+.chip .big { font-size: 28px; }
+.chip .note { display: block; font-size: 12px; color: var(--silk-dim); margin-top: 2px; }
+.chip.grow { flex: 1; }
+.probes { display: flex; flex-wrap: wrap; gap: 0 10px; margin-top: 6px; font-size: 13px; font-weight: 700; }
+
+/* ---------- Drives: M.2 on one row, SATA on another ---------- */
+.store {
+  grid-area: store;
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.store-row { display: grid; gap: 8px; }
+.m2-row { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
+.sata-row { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
+.drive { padding: 7px 10px 8px; min-width: 0; }
+.drive.m2 { border-left: 6px solid var(--gold); }
+.drive-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 8px;
+}
+.drive-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.drive-temp { font-weight: 700; font-size: 13px; }
+.drive-note { display: block; font-size: 12px; color: var(--silk-dim); margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.drive.warn { box-shadow: inset 0 0 0 1px var(--alert); }
+.drive.warn .drive-note { color: var(--alert); }
+.drive.warn .meter i { background: var(--alert); }
+
+/* ---------- Key ---------- */
+.key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 24px;
+  padding: 10px 2px 0;
+  color: var(--silk-dim);
+  font-size: 13px;
+}
+.key-item { display: inline-flex; align-items: center; gap: 8px; }
+.key-gold { width: 22px; height: 8px; background: var(--gold); }
+.key-heat { width: 44px; height: 8px; background: linear-gradient(90deg, rgb(125,184,196), rgb(214,212,138), rgb(242,169,59), rgb(255,92,51)); }
+
+/* ---------- Detail ---------- */
+.rail {
+  position: sticky;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+  overflow-y: auto;
+  padding: 2px 6px 12px 0;
+  scrollbar-width: thin;
+  scrollbar-color: var(--trace) transparent;
+}
+.rail h2 { font-size: 18px; line-height: 1.25; font-weight: 700; }
+.rail-sub { color: var(--silk-dim); font-size: 13px; margin-top: 2px; }
+.rail-sub:empty { display: none; }
+
+.scope { margin-top: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--trace); }
+.scope-name { color: var(--silk-dim); font-size: 13px; }
+.scope-value { font-size: 32px; font-weight: 700; line-height: 1.15; letter-spacing: -0.01em; }
+#scope { display: block; width: 100%; height: 130px; margin-top: 6px; }
+.scope-foot { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; color: var(--silk-dim); margin-top: 4px; }
+
+.sensor-group { margin-top: 14px; }
+.sensor-group h3 { font-size: 13px; font-weight: 700; color: var(--silk-dim); margin-bottom: 2px; }
+.sensor {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 12px;
+  width: 100%;
+  padding: 3px 6px;
+  border-radius: 2px;
+}
+.sensor:hover { background: var(--mask-up); }
+.sensor[aria-pressed="true"] { background: var(--mask-up); box-shadow: inset 2px 0 0 var(--gold); }
+.sensor-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--silk-dim); }
+.sensor[aria-pressed="true"] .sensor-name { color: var(--silk); }
+.sensor-val { font-weight: 700; white-space: nowrap; }
+
+.more {
+  margin-top: 14px;
+  padding: 6px 10px;
+  width: 100%;
+  color: var(--silk);
+  border: 1px solid var(--trace);
+  border-radius: 2px;
+}
+.more:hover { background: var(--mask-up); }
+
+/* ---------- Narrow board: the board's own width decides, not the screen's ---------- */
+@container (max-width: 1150px) {
+  .fans { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@container (max-width: 700px) {
+  .fans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* ---------- Narrow screens ---------- */
+@media (max-width: 1240px) {
+  .bench { grid-template-columns: minmax(0, 1fr); }
+  .rail { position: static; max-height: none; overflow: visible; }
+}
+
+@media (max-width: 760px) {
+  .top { grid-template-columns: minmax(0, 1fr); padding: 14px 16px 12px; }
+  .mark, .fresh { padding-top: 0; }
+  .bench { padding: 0 16px 16px; }
+  .board {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    grid-template-areas: var(--areas-mobile, "brand brand");
+    gap: 12px;
+    padding: 16px 12px;
+  }
+  .traces { display: none; }
+  .brand { padding-left: 12px; }
+  .dimms { min-height: 150px; }
+  .cpu, .cpu.single { grid-template-columns: minmax(0, 1fr); min-height: 0; }
+  .iod { flex-direction: row; flex-wrap: wrap; align-items: baseline; gap: 2px 14px; }
+  .gpu { grid-template-columns: minmax(0, 1fr); }
+  .gpu-fans .rotor { width: 44px; height: 44px; }
+  .side { flex-direction: row; flex-wrap: wrap; }
+  .side .chip { flex: 1 1 140px; }
+  .m2-row, .sata-row { grid-template-columns: minmax(0, 1fr); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .th i, .meter i { transition: none; }
+}

@@ -1,0 +1,9 @@
+# .NET / Visual Studio - artefatti di build
+bin/
+obj/
+dist/
+publish/
+installer/output/
+*.user
+*.suo
+.vs/
