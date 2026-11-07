@@ -58,14 +58,22 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
 
     private bool BackgroundActive => Within(ref _lastBackgroundRequest, BackgroundTimeout);
 
-    // The small always-on-top window shows a few numbers: a reading every 2 seconds is enough.
-    private long _lastSummaryRequest;
-    private static readonly TimeSpan SummaryInterval = TimeSpan.FromSeconds(2);
+    // The small window and the number on the tray icon show a few headline values: every second
+    // only the parts they show are read (CPU, graphics, memory), the rest at the idle pace.
+    public enum SummaryPart { Cpu, Gpu, Memory }
+    private readonly long[] _lastSummaryRequest = new long[3];
+    private static readonly TimeSpan SummaryTimeout = TimeSpan.FromSeconds(3);
 
-    /// <summary>Called by the small window: sensors are read every 2 seconds while it is open.</summary>
-    public void NoteSummaryActivity() => Interlocked.Exchange(ref _lastSummaryRequest, Environment.TickCount64);
+    /// <summary>Called for /api/summary: <paramref name="part"/> null means all three parts.</summary>
+    public void NoteSummaryActivity(SummaryPart? part)
+    {
+        var now = Environment.TickCount64;
+        for (var i = 0; i < _lastSummaryRequest.Length; i++)
+            if (part is null || (int)part == i) Interlocked.Exchange(ref _lastSummaryRequest[i], now);
+    }
 
-    private bool SummaryActive => Within(ref _lastSummaryRequest, ClientTimeout);
+    private bool SummaryWanted(SummaryPart part) => Within(ref _lastSummaryRequest[(int)part], SummaryTimeout);
+    private bool SummaryActive => SummaryWanted(SummaryPart.Cpu) || SummaryWanted(SummaryPart.Gpu) || SummaryWanted(SummaryPart.Memory);
 
     /// <summary>
     /// Called on every page request: while a page is open, sensors are read every second, or
@@ -145,7 +153,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         }
         if (SummaryActive)
         {
-            if (sincePoll >= SummaryInterval - Tolerance) Poll(fast: false, summaryOnly: true);
+            if (sincePoll >= TimeSpan.FromSeconds(1) - Tolerance) Poll(fast: false, summaryOnly: true);
             return;
         }
         var sinceClient = TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastClientRequest));
@@ -154,19 +162,23 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     }
 
     /// <summary>How often a part is read. Temperatures of drives and memory modules move slowly.</summary>
-    private static TimeSpan IntervalFor(IHardware hw, bool fast, bool summaryOnly) => hw.HardwareType switch
+    private TimeSpan IntervalFor(IHardware hw, bool fast, bool summaryOnly) => hw.HardwareType switch
     {
-        // Only the small window is open: just what it shows (CPU, graphics, memory) is fresh;
-        // the rest keeps the idle pace, enough for the notifications.
+        // Only the small window or the tray number is showing: just the parts they show are
+        // fresh; the rest keeps the idle pace, enough for the notifications.
         _ when summaryOnly && !IsSummaryPart(hw) => IdleInterval,
         HardwareType.Storage => TimeSpan.FromSeconds(10),
         HardwareType.Memory when hw.Name.EndsWith(')') && hw.Name.Contains("(#") => TimeSpan.FromSeconds(5),
         _ => fast ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(1),
     };
 
-    private static bool IsSummaryPart(IHardware hw) =>
-        hw.HardwareType is HardwareType.Cpu or HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel
-        || (hw.HardwareType == HardwareType.Memory && !hw.Name.Contains("(#"));
+    private bool IsSummaryPart(IHardware hw) => hw.HardwareType switch
+    {
+        HardwareType.Cpu => SummaryWanted(SummaryPart.Cpu),
+        HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel => SummaryWanted(SummaryPart.Gpu),
+        HardwareType.Memory => !hw.Name.Contains("(#") && SummaryWanted(SummaryPart.Memory),
+        _ => false,
+    };
 
     private void UpdateHardware(DateTime now, bool fast, bool summaryOnly)
     {

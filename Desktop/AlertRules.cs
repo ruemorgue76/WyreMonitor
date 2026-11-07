@@ -88,8 +88,9 @@ internal static partial class AlertRules
         void CheckTemp(string key, double? value, Limit limit, string label)
         {
             if (value is not { } v || !on.Temps) return;
-            if (v >= limit.Crit) alerts.Add(new(key, 2, $"{label} at {T(v)}", $"Above the critical limit of {T(limit.Crit)}."));
-            else if (v >= limit.Warn) alerts.Add(new(key, 1, $"{label} at {T(v)}", $"Above the warning threshold of {T(limit.Warn)}."));
+            const string act = "Check its cooling, or change the limit in Settings.";
+            if (v >= limit.Crit) alerts.Add(new(key, 2, $"{label} at {T(v)}", $"Above the critical limit of {T(limit.Crit)}. {act}"));
+            else if (v >= limit.Warn) alerts.Add(new(key, 1, $"{label} at {T(v)}", $"Above the warning threshold of {T(limit.Warn)}. {act}"));
         }
 
         var cpu = r.Hardware.FirstOrDefault(h => h.Type == "Cpu");
@@ -137,11 +138,11 @@ internal static partial class AlertRules
                 var ratio = free.Value / total.Value;
                 if (ratio < FreeWarn)
                     alerts.Add(new($"space:{g.Name}", ratio < FreeCrit ? 2 : 1, "Windows drive almost full",
-                        $"{FormatBytes(free.Value)} free of {FormatBytes(total.Value)}."));
+                        $"{FormatBytes(free.Value)} free of {FormatBytes(total.Value)}. Free some space: Windows slows down and updates fail when it runs out."));
             }
             if (on.Wear && life is not null && life.Value <= LifeWarn)
                 alerts.Add(new($"wear:{g.Name}", life.Value <= LifeCrit ? 2 : 1, $"SSD {shortName} near end of life",
-                    $"Remaining life {Math.Round(life.Value)} %."));
+                    $"Remaining life {Math.Round(life.Value)} %. Back up its data and plan a replacement."));
         }
 
         // Fans by controller, labelled as on the board: A = first chip, B = second.
@@ -158,7 +159,7 @@ internal static partial class AlertRules
                 fanWatch.State[f.Id] = st;
                 if (!on.Fans || !Shown(f.Id) || !st.Spun || st.Zeros < 2) continue;
                 var name = page.Names.TryGetValue(f.Id, out var custom) ? custom : $"Fan {(char)('A' + c)}{i + 1}";
-                alerts.Add(new($"fan:{f.Id}", 2, $"{name} stopped", "It was spinning a moment ago."));
+                alerts.Add(new($"fan:{f.Id}", 2, $"{name} stopped", "It was spinning a moment ago. Check its cable and that nothing blocks it."));
             }
         }
         return alerts.OrderByDescending(a => a.Severity).ToList();

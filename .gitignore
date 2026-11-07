@@ -10,3 +10,6 @@ installer/output/
 
 # Local test scripts and their output (not part of the app)
 testing/
+
+# Working files of the impeccable design tool (critiques, mock-ups, question state)
+.impeccable/

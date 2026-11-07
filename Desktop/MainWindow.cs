@@ -13,22 +13,24 @@ namespace WyreMonitor.Desktop;
 /// </summary>
 internal sealed class MainWindow : Form
 {
-    // Same colour as the page background, so opening never flashes white.
-    private static readonly Color Background = ColorTranslator.FromHtml("#0c2a25");
-
-    private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Background };
+    private readonly WebView2 _web = new() { Dock = DockStyle.Fill };
     private readonly System.Windows.Forms.Timer _retry = new() { Interval = 3000 };
     private readonly Action<PageSettings> _onPageSettings;
     private readonly Action _onExport;
+    private readonly Action _onMini;
     private string? _url;
+    private Themes.Theme _theme;
 
-    public MainWindow(Icon icon, Action<PageSettings> onPageSettings, Action onExport)
+    public MainWindow(Icon icon, Action<PageSettings> onPageSettings, Action onExport, Action onMini, string? theme)
     {
+        _onMini = onMini;
         _onPageSettings = onPageSettings;
         _onExport = onExport;
         Text = "WyreMonitor";
         Icon = icon;
-        BackColor = Background;
+        // The page's background from the first frame, so opening never flashes another colour.
+        _theme = Themes.For(theme);
+        BackColor = _web.DefaultBackgroundColor = _theme.Page;
         MinimumSize = new Size(1000, 640);
         StartPosition = FormStartPosition.CenterScreen;
 
@@ -43,13 +45,29 @@ internal sealed class MainWindow : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
-        // Title bar in the page colours, also when Windows paints title bars with the accent
-        // colour. On older Windows these calls just fail, with no consequences.
-        var enabled = 1;
-        _ = DwmSetWindowAttribute(Handle, DwmUseImmersiveDarkMode, ref enabled, sizeof(int));
-        var caption = ColorRef(Background);
+        PaintTitleBar();
+    }
+
+    /// <summary>The board theme chosen in the page: background and title bar follow it.</summary>
+    public void ApplyTheme(string? theme)
+    {
+        var next = Themes.For(theme);
+        if (next == _theme) return;
+        _theme = next;
+        BackColor = _web.DefaultBackgroundColor = _theme.Page;
+        PaintTitleBar();
+    }
+
+    // Title bar in the page colours, also when Windows paints title bars with the accent
+    // colour. On older Windows these calls just fail, with no consequences.
+    private void PaintTitleBar()
+    {
+        if (!IsHandleCreated) return;
+        var dark = _theme.Light ? 0 : 1;
+        _ = DwmSetWindowAttribute(Handle, DwmUseImmersiveDarkMode, ref dark, sizeof(int));
+        var caption = ColorRef(_theme.Page);
         _ = DwmSetWindowAttribute(Handle, DwmCaptionColor, ref caption, sizeof(int));
-        var text = ColorRef(ColorTranslator.FromHtml("#f0f1e4"));
+        var text = ColorRef(_theme.Text);
         _ = DwmSetWindowAttribute(Handle, DwmTextColor, ref text, sizeof(int));
     }
 
@@ -79,8 +97,8 @@ internal sealed class MainWindow : Form
             settings.AreBrowserAcceleratorKeysEnabled = false;
             settings.IsStatusBarEnabled = false;
             settings.IsZoomControlEnabled = false;
-            // The page sends two kinds of message: a copy of its settings for the icon next to
-            // the clock, and "export" (the CSV). Accepted only from the service's page,
+            // The page sends three kinds of message: a copy of its settings for the icon next to
+            // the clock, "export" (the CSV) and "mini" (switch to the small window). Accepted only from the service's page,
             // size-checked and validated.
             settings.IsWebMessageEnabled = true;
             settings.IsGeneralAutofillEnabled = false;
@@ -100,6 +118,7 @@ internal sealed class MainWindow : Form
                 string json;
                 try { json = args.WebMessageAsJson; } catch (ArgumentException) { return; }
                 if (json == """{"type":"export"}""") _onExport();
+                else if (json == """{"type":"mini"}""") _onMini();
                 else if (PageSettings.FromMessage(json) is { } page) _onPageSettings(page);
             };
             core.NewWindowRequested += (_, args) => args.Handled = true;
@@ -136,7 +155,7 @@ internal sealed class MainWindow : Form
         if (url is null)
         {
             _url = null;
-            _web.CoreWebView2.NavigateToString(ServiceMissingPage);
+            _web.CoreWebView2.NavigateToString(ServiceMissingPage(_theme));
             _retry.Start();
             return;
         }
@@ -145,12 +164,14 @@ internal sealed class MainWindow : Form
         _web.CoreWebView2.Navigate($"{url}/");
     }
 
-    private const string ServiceMissingPage = """
+    private static string Hex(Color c) => $"#{c.R:x2}{c.G:x2}{c.B:x2}";
+
+    private static string ServiceMissingPage(Themes.Theme t) => $"""
         <!doctype html><html lang="en"><meta charset="utf-8"><title>WyreMonitor</title>
-        <body style="margin:0;background:#0c2a25;color:#f0f1e4;font:16px/1.5 'Segoe UI',sans-serif">
+        <body style="margin:0;background:{Hex(t.Page)};color:{Hex(t.Text)};font:16px/1.5 'Segoe UI',sans-serif">
         <div style="padding:48px;max-width:640px">
         <h1 style="font-size:28px;margin:0 0 8px">Waiting for the WyreMonitor service</h1>
-        <p style="color:#a9c4b9;margin:0">The service that reads the sensors isn't running yet. Right after Windows
+        <p style="color:{Hex(t.TextDim)};margin:0">The service that reads the sensors isn't running yet. Right after Windows
         starts this can take a few seconds. If this page stays, open Services, find WyreMonitor and start it,
         or reinstall WyreMonitor.</p></div></body></html>
         """;

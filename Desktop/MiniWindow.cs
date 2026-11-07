@@ -9,20 +9,24 @@ namespace WyreMonitor.Desktop;
 /// <summary>
 /// A small window that stays above the others with the headline numbers: CPU, graphics card and
 /// memory. No Windows title bar: it is drawn in the board's colours, dragged from anywhere and
-/// closed with its own ×. Fed by /api/summary every 2 seconds and redrawn only when a number
+/// closed with its own ×; a double click opens the main window. Fed by /api/summary every second
+/// (the service then reads only CPU, graphics and memory that often) and redrawn only when a number
 /// changes, so it costs far less than a second page would.
 /// </summary>
 internal sealed class MiniWindow : Form
 {
-    private static readonly Color Background = ColorTranslator.FromHtml("#0c2a25");
-    private static readonly Color Border = ColorTranslator.FromHtml("#26695a");
-    private static readonly Color Hover = ColorTranslator.FromHtml("#123a32");
-    private static readonly Color Dim = ColorTranslator.FromHtml("#a9c4b9");
-    private static readonly Color Silk = ColorTranslator.FromHtml("#f0f1e4");
+    // The board theme chosen in the page (Themes.cs).
+    private Themes.Theme Theme => Themes.For(_settings.Page.Theme);
+    private Color Background => Theme.Page;
+    private Color Border => Theme.Edge;
+    private Color Hover => Theme.Hover;
+    private Color Dim => Theme.TextDim;
+    private Color Silk => Theme.Text;
 
     private readonly AppSettings _settings;
     private readonly bool _remember;
-    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 2000 };   // the service reads at this pace for it
+    private readonly Action _openMain;
+    private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1000 };
     private readonly Font _title;
     private readonly Font _label;
     private readonly Font _value;
@@ -40,6 +44,7 @@ internal sealed class MiniWindow : Form
     {
         _settings = settings;
         _remember = remember;
+        _openMain = openMain;
         Text = "WyreMonitor";
         Icon = icon;
         TopMost = true;
@@ -110,7 +115,24 @@ internal sealed class MiniWindow : Form
         _value.Dispose();
     }
 
+    /// <summary>The page changed theme or colours: redraw in them now.</summary>
+    public void ApplyTheme()
+    {
+        BackColor = Background;
+        _shown = "";
+        Invalidate();
+    }
+
     // ---- Dragging and the close button --------------------------------------------------
+    // The window is dragged as if by its title bar, so a double click arrives as a double click
+    // on a title bar, which would maximize it: it opens the main window instead.
+    protected override void WndProc(ref Message m)
+    {
+        const int WmNcLButtonDblClk = 0xA3;
+        if (m.Msg == WmNcLButtonDblClk) { _openMain(); return; }
+        base.WndProc(ref m);
+    }
+
     private Rectangle CloseBox
     {
         get
@@ -154,7 +176,7 @@ internal sealed class MiniWindow : Form
         _busy = true;
         try
         {
-            if (++_ticks % 30 == 0) _url = null;   // look the service up again now and then
+            if (++_ticks % 60 == 0) _url = null;   // look the service up again now and then
             _url ??= await ServiceLink.FindUrlAsync();
             if (_url is null) { ShowMessage("Waiting for the service"); return; }
             string json;
@@ -202,7 +224,8 @@ internal sealed class MiniWindow : Form
         string Temp(double? v) => v is { } t ? AlertRules.FormatTemp(t, page) : "n/a";
         static string Pct(double? v) => v is { } p ? $"{Math.Round(p)} %" : "n/a";
         static string Watts(double? v) => v is { } w ? $"{Math.Round(w)} W" : "";
-        Color Heat(double? v, Limit l) => v is not { } t ? Dim : t >= l.Crit ? Color.FromArgb(255, 92, 51) : t >= l.Warn ? Color.FromArgb(242, 169, 59) : Silk;
+        var (warn, crit) = Themes.Alerts(page.Palette, Theme.Light);
+        Color Heat(double? v, Limit l) => v is not { } t ? Dim : t >= l.Crit ? crit : t >= l.Warn ? warn : Silk;
 
         SetRows(
         [

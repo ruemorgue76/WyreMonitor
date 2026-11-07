@@ -44,13 +44,23 @@ internal sealed class TrayApp : ApplicationContext
             }
         };
 
-        var temperature = new ToolStripMenuItem("Show the CPU temperature on this icon") { Checked = _settings.TrayTemperature };
-        temperature.Click += (_, _) =>
+        // What the icon shows while both windows are closed: one reading, chosen here.
+        var showOnIcon = new ToolStripMenuItem("Show on this icon");
+        void AddChoice(string label, string? key)
         {
-            _settings.TrayTemperature = temperature.Checked = !temperature.Checked;
-            _settings.Save();
-            _monitor!.Refresh();
-        };
+            var item = new ToolStripMenuItem(label) { Checked = _settings.TrayValue == key };
+            item.Click += (_, _) =>
+            {
+                _settings.TrayValue = key;
+                _settings.Save();
+                foreach (ToolStripMenuItem other in showOnIcon.DropDownItems.OfType<ToolStripMenuItem>()) other.Checked = other == item;
+                _monitor!.Refresh();
+            };
+            showOnIcon.DropDownItems.Add(item);
+        }
+        AddChoice("Nothing", null);
+        showOnIcon.DropDownItems.Add(new ToolStripSeparator());
+        foreach (var v in TrayValues.All) AddChoice(v.Label, v.Key);
 
         var notifications = new ToolStripMenuItem("Notify me when something needs attention") { Checked = _settings.Notifications };
         notifications.Click += (_, _) =>
@@ -82,7 +92,7 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.AddRange(new ToolStripItem[]
         {
             version, new ToolStripSeparator(), open, _miniItem, new ToolStripSeparator(),
-            autostart, temperature, notifications, new ToolStripSeparator(),
+            autostart, showOnIcon, notifications, new ToolStripSeparator(),
             checkNow, autoCheck, new ToolStripSeparator(), exit,
         });
 
@@ -125,7 +135,9 @@ internal sealed class TrayApp : ApplicationContext
     /// <param name="remember">False for a one-off --mini run: nothing is saved about it.</param>
     private void OpenMini(bool remember)
     {
-        if (_mini is not null) return;
+        // One place at a time shows the readings: the small window replaces the main one.
+        CloseMainForSwitch();
+        if (_mini is not null) { _mini.Activate(); return; }
         _mini = new MiniWindow(_icon, _settings, ShowWindow, remember);
         _mini.FormClosed += (_, _) =>
         {
@@ -133,10 +145,28 @@ internal sealed class TrayApp : ApplicationContext
             // Closed with its own ×: it stays closed next time too. Not when quitting the app.
             if (remember && !_quitting) { _settings.MiniWindow = _miniItem.Checked = false; _settings.Save(); }
             else _miniItem.Checked = _settings.MiniWindow;
+            UpdateMode();
         };
         _miniItem.Checked = true;
         _mini.Show();
+        UpdateMode();
     }
+
+    /// <summary>The icon shows its reading only while neither window is open.</summary>
+    private void UpdateMode() => _monitor.WindowsOpen = _window is not null || _mini is not null;
+
+    private bool _switching;
+
+    private void CloseMainForSwitch()
+    {
+        if (_window is null) return;
+        _switching = true;   // no "still running" notice: the small window takes over
+        _window.Close();
+        _switching = false;
+    }
+
+    /// <summary>The page's "Small window" button.</summary>
+    private void SwitchToMini() => _uiThread.BeginInvoke(() => SetMini(true));
 
     private async Task AutoCheckAsync()
     {
@@ -165,6 +195,8 @@ internal sealed class TrayApp : ApplicationContext
     {
         _settings.Page = page;
         _settings.Save();
+        _window?.ApplyTheme(page.Theme);
+        _mini?.ApplyTheme();
         _monitor.Refresh();
     }
 
@@ -175,11 +207,14 @@ internal sealed class TrayApp : ApplicationContext
     {
         if (_window is null)
         {
-            _window = new MainWindow(_icon, OnPageSettings, Export);
+            // The main window replaces the small one; closing it later leaves just the icon.
+            if (_mini is not null) SetMini(false);
+            _window = new MainWindow(_icon, OnPageSettings, Export, SwitchToMini, _settings.Page.Theme);
             _window.FormClosed += (_, _) =>
             {
                 _window = null;
-                if (_closeHintShown) return;
+                UpdateMode();
+                if (_closeHintShown || _switching || _quitting) return;
                 _closeHintShown = true;
                 const string title = "WyreMonitor is still running";
                 const string text = "You'll find it next to the clock. To quit it: right-click the icon, then Exit.";
@@ -191,6 +226,7 @@ internal sealed class TrayApp : ApplicationContext
                 });
             };
             _window.Show();
+            UpdateMode();
         }
 
         if (_window.WindowState == FormWindowState.Minimized) _window.WindowState = FormWindowState.Normal;

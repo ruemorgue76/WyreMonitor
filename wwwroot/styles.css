@@ -66,7 +66,6 @@ button {
   align-items: start;
   padding: 20px 24px 16px;
 }
-.mark { color: var(--silk-dim); font-size: 14px; padding-top: 9px; }
 .fresh { color: var(--silk-dim); font-size: 13px; white-space: nowrap; }
 
 /* ---------- Header buttons and settings ---------- */
@@ -76,7 +75,7 @@ button {
   padding: 5px 12px;
   font-size: 13px;
   white-space: nowrap;
-  border: 1px solid var(--trace);
+  border: 1px solid var(--control);
   border-radius: 3px;
 }
 .tool:hover, #settingsToggle[aria-expanded="true"] { background: var(--mask-up); }
@@ -199,7 +198,7 @@ body.stale .rail { opacity: .45; }
   border-radius: 3px;
 }
 .part:hover { background: var(--epoxy-up); }
-.part[aria-pressed="true"] { outline: 2px solid var(--gold); outline-offset: 2px; }
+.part[aria-pressed="true"] { outline: 2px solid var(--select); outline-offset: 2px; }
 .part:focus-visible { outline: 2px solid var(--silk); outline-offset: 2px; }
 
 .designator { display: block; font-size: 12px; color: var(--silk-dim); line-height: 1.3; }
@@ -222,7 +221,7 @@ body.stale .rail { opacity: .45; }
   align-items: center;
   padding: 6px 8px;
 }
-.fan.off { background: transparent; box-shadow: inset 0 0 0 1px var(--trace); }
+.fan.off { background: transparent; box-shadow: inset 0 0 0 1px var(--control); }
 .fan.off .rotor { opacity: .4; }
 .fan .val { display: block; font-size: 14px; font-weight: 700; white-space: nowrap; }
 .fan.off .val { font-weight: 400; color: var(--silk-dim); }
@@ -262,7 +261,7 @@ body.stale .rail { opacity: .45; }
   grid-template-columns: minmax(0, 1fr) 136px minmax(0, 1fr);
   gap: 8px;
   padding: 10px;
-  border: 1px solid #39423f;
+  border: 1px solid var(--edge);
   min-height: 292px;
 }
 .cpu.single { grid-template-columns: 170px minmax(0, 1fr); }
@@ -328,7 +327,7 @@ body.stale .rail { opacity: .45; }
   gap: 20px;
   align-items: center;
   padding: 10px 16px 18px;
-  border: 1px solid #39423f;
+  border: 1px solid var(--edge);
 }
 /* PCIe edge connector */
 .gpu::after {
@@ -377,7 +376,17 @@ body.stale .rail { opacity: .45; }
 .m2-row { grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); }
 .sata-row { grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); }
 .drive { padding: 7px 10px 8px; min-width: 0; }
-.drive.m2 { border-left: 6px solid var(--gold); }
+/* M.2 drives: the gold fingers of their edge connector, drawn like the graphics card's. */
+.drive.m2 { padding-left: 17px; }
+.drive.m2::before {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 7px;
+  bottom: 7px;
+  width: 5px;
+  background: repeating-linear-gradient(180deg, var(--gold) 0 3px, transparent 3px 5px);
+}
 .drive-head {
   display: flex;
   justify-content: space-between;
@@ -402,7 +411,7 @@ body.stale .rail { opacity: .45; }
 }
 .key-item { display: inline-flex; align-items: center; gap: 8px; }
 .key-gold { width: 22px; height: 8px; background: var(--gold); }
-.key-heat { width: 44px; height: 8px; background: linear-gradient(90deg, rgb(125,184,196), rgb(214,212,138), rgb(242,169,59), rgb(255,92,51)); }
+.key-heat { width: 44px; height: 8px; background: linear-gradient(90deg, rgb(125,184,196), rgb(222,222,200), rgb(255,138,61), rgb(255,92,51)); }
 
 /* ---------- Detail ---------- */
 .rail {
@@ -445,18 +454,11 @@ body.stale .rail { opacity: .45; }
   padding: 6px 10px;
   width: 100%;
   color: var(--silk);
-  border: 1px solid var(--trace);
+  border: 1px solid var(--control);
   border-radius: 2px;
 }
 .more:hover { background: var(--mask-up); }
 
-/* ---------- Narrow board: the board's own width decides, not the screen's ---------- */
-@container (max-width: 1150px) {
-  .fans { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-@container (max-width: 700px) {
-  .fans { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-}
 
 /* ---------- Narrow screens ---------- */
 @media (max-width: 1240px) {
@@ -466,7 +468,7 @@ body.stale .rail { opacity: .45; }
 
 @media (max-width: 760px) {
   .top { grid-template-columns: minmax(0, 1fr); padding: 14px 16px 12px; }
-  .mark, .tools { padding-top: 0; }
+  .tools { padding-top: 0; }
   .tools { flex-wrap: wrap; }
   .settings { right: 16px; }
   .bench { padding: 0 16px 16px; }
@@ -519,8 +521,8 @@ body.stale .rail { opacity: .45; }
   width: 100%;
   font: inherit;
   color: var(--silk);
-  background: var(--mask);
-  border: 1px solid var(--trace);
+  background: var(--field);
+  border: 1px solid var(--control);
   border-radius: 2px;
   padding: 3px 6px;
 }
@@ -570,3 +572,398 @@ body.list-view .board-wrap { display: none; }
 .list-group tbody tr[aria-selected="true"] { background: var(--epoxy); box-shadow: inset 2px 0 0 var(--gold); }
 .list-group tbody tr[aria-selected="true"] th { color: var(--silk); }
 .list-group tbody tr:focus-visible { outline: 2px solid var(--silk); outline-offset: -2px; }
+
+/* ---------- 1.5: appearance ---------- */
+/* Tokens added for themes: --edge (outline of the big chips), --field (text fields),
+   --row-hover, --heat (the key's gradient). Text colours (--silk, --silk-dim) are the page's;
+   components that are always dark (parts, the settings panel) set their own below. */
+:root {
+  --edge: #39423f;
+  --control: #4f9a86;     /* outline of buttons and fields: at least 3:1 against the page */
+  --field: var(--mask);
+  --row-hover: var(--epoxy);
+  --heat: linear-gradient(90deg, rgb(125,184,196), rgb(222,222,200), rgb(255,138,61), rgb(255,92,51));
+}
+.key-heat { background: var(--heat); }
+
+/* Resolved on body, so a component that redefines --gold keeps the board's for its outline. */
+body { --select: var(--gold); }
+
+body[data-theme="black"] {
+  --control: #73787f;
+  --mask: #101112; --mask-up: #18191b; --trace: #3b3f44; --epoxy: #070708; --epoxy-up: #1f2023;
+  --silk: #ececea; --silk-dim: #a4a8ad; --gold-dim: #34322c; --edge: #3a3d40;
+}
+body[data-theme="blue"] {
+  --control: #5583c6;
+  --mask: #0a1a33; --mask-up: #0f2548; --trace: #2b5c9e; --epoxy: #0d1119; --epoxy-up: #1b2433;
+  --silk: #eef3fb; --silk-dim: #a9bddb; --gold-dim: #2c3646; --edge: #34405a;
+}
+/* White solder mask: dark silkscreen on the board, the components stay black. */
+body[data-theme="white"] {
+  color-scheme: light;
+  --mask: #e4e8e1; --mask-up: #f7f8f4; --trace: #b5c2b1; --epoxy: #1d2224; --epoxy-up: #2c3336;
+  --silk: #17201c; --silk-dim: #4f5d56; --gold: #9a7318; --gold-dim: #3e3a30; --alert: #c4441a;
+  --edge: #555d5a; --row-hover: #e4e8e1; --control: #76847d;
+}
+/* Text that inherits its colour takes the value computed on the page, not the variable: the
+   components set their own, so a component's --silk reaches every line inside it. */
+.part, .settings { color: var(--silk); }
+
+/* Inside the black components the light theme's colours return: light text, bright gold, light alert. */
+body[data-theme="white"] :is(.part, .settings) {
+  --silk: #f0f1e4; --silk-dim: #aab8b1; --field: #0c0f0e; --gold: #d8b45a; --alert: #ff8a5c; --control: #7d8b84;
+}
+body[data-theme="white"] .fan.off { --silk: #17201c; --silk-dim: #4f5d56; }
+html:has(body[data-theme="white"]) { background: #e4e8e1; }
+
+/* Colours easier to tell apart with colour blindness (Okabe-Ito): sky, yellow, orange, purple. */
+body.cb { --heat: linear-gradient(90deg, #56b4e9, #f0e442, #e69f00, #cc79a7); --alert: #cc79a7; }
+
+/* High contrast: secondary text as strong as the main one, clearer edges. */
+body.hc { --control: var(--silk); --silk-dim: var(--silk); --trace: color-mix(in srgb, var(--trace) 45%, var(--silk)); --edge: var(--silk); }
+body.hc :is(.part, .settings, .fan.off) { --silk-dim: var(--silk); }
+body.hc .part { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--silk) 55%, transparent); }
+
+/* Compact: the same board in less space. */
+body.compact .top { padding: 12px 18px 10px; }
+body.compact .bench { gap: 14px; padding: 0 18px 18px; }
+body.compact .board { gap: 10px 18px; padding: 12px 18px 18px; }
+body.compact .dimms, body.compact .cpu { min-height: 220px; }
+body.compact .fan { padding: 4px 6px; grid-template-columns: 28px minmax(0, 1fr); }
+body.compact .rotor { width: 28px; height: 28px; }
+body.compact .gpu-fans .rotor { width: 48px; height: 48px; }
+body.compact .gpu { padding: 8px 12px 16px; gap: 14px; }
+body.compact .big { font-size: 32px; }
+body.compact .chip .big { font-size: 24px; }
+body.compact .chip { padding: 8px 10px; }
+body.compact .side, body.compact .store, body.compact .store-row { gap: 6px; }
+body.compact .core { min-height: 22px; }
+body.compact #scope { height: 100px; }
+
+/* Without decorations: no copper traces, mounting holes or gold contacts. */
+body.no-deco .traces,
+body.no-deco .board::before,
+body.no-deco .board::after,
+body.no-deco .gpu::after,
+body.no-deco .drive.m2::before { display: none; }
+body.no-deco .drive.m2 { padding-left: 10px; }
+body.no-deco .dimm { border-bottom-color: transparent; }
+
+/* Browser surfaces follow the theme: text selection, caret, scrollbars. */
+::selection { background: color-mix(in srgb, var(--gold) 40%, transparent); color: var(--silk); }
+input { caret-color: var(--gold); }
+html { scrollbar-color: var(--control) var(--mask); }
+
+/* ---------- 1.5: the board, more of a board ---------- */
+/* Silkscreen: corner-bracket courtyards around each group of parts and its reference label,
+   in the board's own silkscreen ink. */
+:root { --silk-line: color-mix(in srgb, var(--silk-dim) 45%, transparent); }
+.court { position: relative; }
+.court::before {
+  content: "";
+  position: absolute;
+  inset: -6px;
+  pointer-events: none;
+  --b: var(--silk-line);
+  background:
+    linear-gradient(var(--b) 0 0) top left / 9px 1px no-repeat,
+    linear-gradient(var(--b) 0 0) top left / 1px 9px no-repeat,
+    linear-gradient(var(--b) 0 0) top right / 9px 1px no-repeat,
+    linear-gradient(var(--b) 0 0) top right / 1px 9px no-repeat,
+    linear-gradient(var(--b) 0 0) bottom left / 9px 1px no-repeat,
+    linear-gradient(var(--b) 0 0) bottom left / 1px 9px no-repeat,
+    linear-gradient(var(--b) 0 0) bottom right / 9px 1px no-repeat,
+    linear-gradient(var(--b) 0 0) bottom right / 1px 9px no-repeat;
+}
+.court::after {
+  content: attr(data-ref);
+  position: absolute;
+  left: 0;
+  top: -18px;
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: .08em;
+  color: color-mix(in srgb, var(--silk-dim) 80%, transparent);
+  white-space: nowrap;
+  pointer-events: none;
+}
+/* A part with its own pseudo-elements keeps them: the CPU is the only part that is also a group. */
+.part.cpu.court { overflow: visible; }
+
+/* Fan headers, one bank per controller; the bank fills its share of the row, no phantom column. */
+.fans { display: flex; flex-wrap: wrap; gap: 26px 18px; padding-top: 4px; }
+.bank { flex: var(--n) 1 calc(var(--n) * 104px); display: grid; grid-template-columns: repeat(auto-fit, minmax(104px, 1fr)); gap: 8px; }
+/* A stopped fan is a quiet, empty header: dashed outline, dimmed rotor, no button-like frame. */
+.fan.off { background: transparent; box-shadow: none; outline: 1px dashed var(--silk-line); outline-offset: -1px; }
+.fan.off .rotor { opacity: .3; }
+.fan.off:hover { background: color-mix(in srgb, var(--epoxy) 50%, transparent); }
+
+/* The CPU socket: a frame around the package; Threadripper's retention frame screws, numbered as printed. */
+.part.cpu { box-shadow: 0 0 0 5px var(--epoxy-up), 0 0 0 6px var(--edge); }
+.part.cpu[aria-pressed="true"] { outline-offset: 9px; }
+.screw {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  border: 2px solid var(--gold);
+  border-radius: 50%;
+  background: var(--mask);
+  z-index: 1;
+}
+.screw::after { content: attr(data-n); position: absolute; left: 15px; top: -3px; font: 700 9px/1 var(--font); color: var(--silk-dim); }
+.screw[data-n="1"] { left: -11px; top: -11px; }
+.screw[data-n="2"] { right: -11px; top: -11px; }
+.screw[data-n="3"] { left: calc(50% - 6px); bottom: -11px; }
+.screw[data-n="2"]::after { left: auto; right: 15px; }
+
+/* Memory sticks: eight chips taking the module's heat colour; labels read upright. */
+.dimm { justify-content: flex-start; gap: 6px; padding: 7px 4px 6px; }
+.dimm .temp, .dimm .designator { writing-mode: horizontal-tb; transform: none; text-align: center; }
+.dimm .temp { font-size: 12px; }
+.dimm .designator { font-size: 10px; }
+.chips { flex: 1; width: 74%; display: grid; grid-template-rows: repeat(8, 1fr); gap: 5px; }
+.chips i { display: block; background: var(--chip, var(--epoxy-up)); border-radius: 1px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--silk-dim) 12%, transparent); }
+
+/* Vias at the ends of the traces; a net reaching a part with an alert takes the alert colour. */
+.traces circle { fill: var(--mask-up); stroke: var(--trace); stroke-width: 1.5; }
+.traces g.hot path, .traces g.hot circle { stroke: var(--alert); }
+
+/* Without decorations the silkscreen outlines, screws and vias go too; the labels stay. */
+body.no-deco .court::before, body.no-deco .screw { display: none; }
+body.no-deco .part.cpu { box-shadow: none; }
+@media (max-width: 760px) { .court::after { top: -15px; } .bank { flex-basis: 100%; } }
+
+/* Silkscreen labels sit on the courtyard line itself, as boards print them, so they need no
+   room of their own above a group; a gap a little wider keeps neighbouring groups apart. */
+.court::after { top: -6px; left: 14px; transform: translateY(-50%); padding: 0 5px; background: var(--mask-up); }
+.board { row-gap: 26px; }
+.store { gap: 22px; }
+.part.cpu.court::before { inset: -14px; }
+.part.cpu.court::after { top: -14px; left: 34px; }
+.board { --dimm: 104px; }
+.dimms { gap: 10px; }
+@media (max-width: 760px) { .court::after { top: -6px; } }
+
+/* ---------- 1.5: layout ---------- */
+/* The detail panel is a daughter board plugged into the main one: board-coloured, its own edge,
+   a row of gold contacts along the side that plugs in. Closed until asked for. */
+/* The contacts are part of the panel's background, so they stay on its edge while it scrolls. */
+.rail {
+  background:
+    repeating-linear-gradient(180deg, var(--gold) 0 4px, transparent 4px 7px) 9px 18px / 6px calc(100% - 36px) no-repeat,
+    var(--mask-up);
+  border: 1px solid var(--trace);
+  border-radius: 6px;
+  padding: 16px 18px 16px 30px;
+  top: 12px;
+  max-height: calc(100vh - 24px);
+}
+body.no-deco .rail { background: var(--mask-up); padding-left: 18px; }
+.rail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+.rail-head .tool { flex: none; }
+.sensor:hover, .sensor[aria-pressed="true"] { background: var(--mask); }
+
+/* With the whole width, the board's readings grow: legible from a second monitor. */
+@container (min-width: 1300px) {
+  .big { font-size: 48px; }
+  .chip .big { font-size: 32px; }
+  .fan .val { font-size: 16px; }
+  .drive-name, .drive-temp { font-size: 15px; }
+  .drive-note { font-size: 13px; }
+  .iod .stat { font-size: 15px; }
+  .stat-cell b { font-size: 19px; }
+}
+
+/* ---------- 1.5: state at a glance ---------- */
+/* State colours, per theme and palette: warning and critical, readable as text on the page. */
+:root { --warn: #ff8a3d; }   /* orange, apart from the gold of load */
+body.cb { --warn: #e69f00; }
+body[data-theme="white"] { --warn: #a04400; }
+body[data-theme="white"].cb { --warn: #7a5200; --alert: #933469; }
+
+/* The headline carries the state before its words: a lit mark and the state's colour. */
+.verdict h1::before {
+  content: "";
+  display: inline-block;
+  width: 13px;
+  height: 13px;
+  margin-right: 14px;
+  vertical-align: .12em;
+  border-radius: 50%;
+  border: 2px solid var(--silk-dim);
+}
+body[data-state="warn"] .verdict h1 { color: var(--warn); }
+body[data-state="crit"] .verdict h1 { color: var(--alert); }
+body[data-state="warn"] .verdict h1::before { background: var(--warn); border-color: var(--warn); }
+body[data-state="crit"] .verdict h1::before { background: var(--alert); border-color: var(--alert); }
+.verdict-body .alert-link { text-align: left; }
+
+/* The board's debug display, where boards have one: a dark window with the code and its LED. */
+.brand { display: flex; justify-content: space-between; align-items: center; gap: 16px; }
+.qcode {
+  display: inline-grid;
+  grid-template-columns: auto auto;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 8px;
+  padding: 5px 10px 4px;
+  background: var(--epoxy);
+  border-radius: 3px;
+  box-shadow: inset 0 0 0 1px var(--edge);
+  margin-right: 22px;
+}
+.qcode b { font: 700 26px/1 var(--font); letter-spacing: .08em; color: var(--silk); min-width: 2.2ch; text-align: center; }
+.qcode small { grid-column: 1 / -1; font-size: 9px; letter-spacing: .14em; color: var(--silk-dim); text-align: right; }
+.qcode .led { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--silk-dim); }
+body[data-state="warn"] .qcode b { color: var(--warn); }
+body[data-state="crit"] .qcode b { color: var(--alert); }
+body[data-state="warn"] .qcode .led { background: var(--warn); border-color: var(--warn); }
+body[data-state="crit"] .qcode .led { background: var(--alert); border-color: var(--alert); }
+
+/* Probes numbered as in the detail panel (or by the user's name). */
+.probes span::before { content: attr(data-p) " "; font-weight: 400; color: var(--silk-dim); }
+
+/* ---------- 1.5: polish ---------- */
+/* The app's name is printed on the board's edge, like a maker's mark, instead of heading the page. */
+.top { grid-template-columns: minmax(0, 1fr) auto; }
+.maker {
+  position: absolute;
+  right: 26px;
+  bottom: 7px;
+  font-size: 10px;
+  letter-spacing: .22em;
+  color: color-mix(in srgb, var(--silk-dim) 70%, transparent);
+  pointer-events: none;
+}
+/* Hiding a part is a rare, reversible action: present but quiet. */
+#hidePart { color: var(--silk-dim); text-decoration-color: transparent; }
+#hidePart:hover, #hidePart:focus-visible { color: var(--silk); text-decoration-color: var(--trace); }
+/* The debug display is a black component too: in the white theme it keeps light ink. */
+body[data-theme="white"] .qcode { --silk: #f0f1e4; --silk-dim: #aab8b1; }
+/* Narrow screens: the header stacks again (the rule above made it two columns). */
+@media (max-width: 760px) {
+  .top { grid-template-columns: minmax(0, 1fr); }
+  .bank { grid-template-columns: repeat(auto-fit, minmax(136px, 1fr)); }
+}
+
+/* ---------- 1.5: clearing the board (critique 2) ---------- */
+/* Gold means one thing: how busy a part is. Screws, holes and contacts are tin. */
+:root { --metal: #b9c2bd; }
+body[data-theme="white"] { --metal: #6f7a74; }
+body[data-theme="white"] :is(.part, .settings) { --metal: #b9c2bd; }
+.board::before, .board::after, .screw { border-color: var(--metal); }
+.dimm { border-bottom-color: var(--metal); }
+.gpu::after { background: repeating-linear-gradient(90deg, var(--metal) 0 4px, transparent 4px 7px); }
+.drive.m2::before { background: repeating-linear-gradient(180deg, var(--metal) 0 3px, transparent 3px 5px); }
+.rail {
+  background:
+    repeating-linear-gradient(180deg, var(--metal) 0 4px, transparent 4px 7px) 9px 18px / 6px calc(100% - 36px) no-repeat,
+    var(--mask-up);
+}
+body.no-deco .rail { background: var(--mask-up); }
+.sensor[aria-pressed="true"], .list-group tbody tr[aria-selected="true"] { box-shadow: inset 2px 0 0 var(--silk); }
+.link:hover, .link[aria-pressed="true"] { text-decoration-color: var(--silk); }
+
+/* The selected part is outlined in ink, not gold. */
+body { --select: var(--silk); }
+
+/* How full: a neutral bar, so it never reads as load or heat. */
+.meter.full { background: color-mix(in srgb, var(--silk-dim) 20%, transparent); }
+.meter.full i { background: var(--silk-dim); }
+.key-full { width: 22px; height: 8px; background: var(--silk-dim); }
+
+/* A header that never turned is an empty socket: four pins, no rotor, quiet text. */
+.fan.empty { outline-color: color-mix(in srgb, var(--silk-dim) 25%, transparent); }
+.fan.empty .rotor { height: 10px; opacity: 1; box-shadow: inset 0 0 0 1px var(--silk-line);
+  background: radial-gradient(circle, var(--metal) 0 1.6px, transparent 2.2px) 0 50% / 25% 100% repeat-x; }
+.fan.empty .rotor > * { display: none; }
+.fan.empty .designator, .fan.empty .val { color: color-mix(in srgb, var(--silk-dim) 80%, transparent); }
+body.no-deco .fan.empty .rotor { background: none; }
+
+/* The part nearest its limit carries the board's one strong outline. */
+.part.focal:is(.gpu) { border-color: var(--silk-dim); }
+.part.focal:is(.dimm, .drive) { box-shadow: inset 0 0 0 1px var(--silk-dim); }
+.drive.warn { box-shadow: inset 0 0 0 1px var(--alert); }
+.part.cpu.focal { box-shadow: 0 0 0 5px var(--epoxy-up), 0 0 0 6px color-mix(in srgb, var(--silk-dim) 55%, var(--edge)); }
+/* Empty headers sit on the board, not on a black part: in the white theme their pins are dark tin. */
+body[data-theme="white"] .fan.empty { --metal: #6f7a74; }
+body.no-deco .part.cpu.focal { box-shadow: none; border-color: var(--silk-dim); }
+
+/* The Super I/O chip: pins on its two long sides. */
+.chip.sio::before {
+  content: "";
+  position: absolute;
+  inset: 10px -5px;
+  pointer-events: none;
+  --p: repeating-linear-gradient(180deg, var(--metal) 0 2px, transparent 2px 7px);
+  background: var(--p) left / 3px 100% no-repeat, var(--p) right / 3px 100% no-repeat;
+}
+body.no-deco .chip.sio::before { display: none; }
+
+/* Verdict: what to do about one alert, and when the last one ended. */
+.alert-actions { display: inline-flex; flex-wrap: wrap; gap: 2px 18px; }
+.recovered { color: var(--silk-dim); }
+
+/* Settings: three tabs and a close button instead of one long wall. */
+.settings-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin: -4px 0 12px; border-bottom: 1px solid var(--trace); }
+.tabs { display: flex; gap: 2px; }
+.tabs [role="tab"] { padding: 6px 10px 7px; font-size: 13px; color: var(--silk-dim); border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tabs [role="tab"]:hover { color: var(--silk); }
+.tabs [role="tab"][aria-selected="true"] { color: var(--silk); font-weight: 700; border-bottom-color: var(--silk); }
+.tabs [role="tab"]:focus-visible { outline: 2px solid var(--silk); outline-offset: -2px; }
+.settings-head .tool { padding: 3px 10px; }
+.settings [role="tabpanel"][hidden] { display: none; }
+
+/* Chart length, under the chart it changes. */
+.span-pick { display: inline-flex; gap: 4px; }
+.span-pick button { padding: 1px 7px; font-size: 12px; color: var(--silk-dim); border: 1px solid var(--trace); border-radius: 2px; }
+.span-pick button:hover { color: var(--silk); }
+.span-pick button[aria-pressed="true"] { color: var(--silk); border-color: var(--control); background: var(--mask); }
+
+/* Compact keeps room for the silkscreen labels between groups. */
+body.compact .board { row-gap: 22px; }
+body.compact .store { gap: 20px; }
+
+/* Memory labels big enough to read; the maker's mark in full silkscreen ink. */
+.dimm .designator { font-size: 12px; }
+.board { --dimm: 112px; }
+.maker { color: var(--silk-dim); }
+
+/* Middle widths: the detail panel slides over the board instead of falling below it. */
+@media (min-width: 761px) and (max-width: 1240px) {
+  .rail {
+    position: fixed;
+    z-index: 20;
+    top: 12px;
+    right: 12px;
+    bottom: 12px;
+    width: min(390px, calc(100vw - 48px));
+    max-height: none;
+    overflow-y: auto;
+    box-shadow: -12px 0 32px rgb(0 0 0 / .4);
+  }
+}
+
+/* ---------- 1.5: critique 3 ---------- */
+/* Silkscreen labels in full ink and a size that reads; on the CPU (a black part) the label and
+   the screw numbers sit on the board, so they take the board's ink, not the part's. */
+.court::after { color: var(--silk-dim); font-size: 11px; }
+body[data-theme="white"] .part.cpu.court::after,
+body[data-theme="white"] .part.cpu .screw::after { color: #4f5d56; }
+body[data-theme="white"] .part.cpu .screw { --mask: #e4e8e1; }
+.fan.empty { outline-color: var(--silk-line); }
+.fan.empty .designator, .fan.empty .val { color: var(--silk-dim); }
+/* Fan cards wide enough for "1205 RPM" at every width. */
+.bank { flex-basis: calc(var(--n) * 132px); grid-template-columns: repeat(auto-fit, minmax(132px, 1fr)); }
+/* Chart length buttons stay on one line. */
+.span-pick button { white-space: nowrap; flex: none; }
+.scope-foot { align-items: center; }
+@media (min-width: 761px) and (max-width: 1240px) {
+  .rail { top: calc(var(--top-h, 80px) + 4px); }
+}
+
+/* Board probes: one per line, name and reading, instead of a row of codes. */
+.probes { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 1px 12px; margin-top: 8px; }
+.probes span { display: contents; }
+.probes span::before { content: attr(data-p); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

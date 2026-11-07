@@ -11,18 +11,28 @@
 </head>
 <body>
   <header class="top">
-    <p class="mark">WyreMonitor</p>
-    <div class="verdict" id="verdict" aria-live="polite">
+    <p class="visually-hidden" id="announce" aria-live="polite"></p>
+    <div class="verdict" id="verdict">
       <h1 id="verdictTitle">Reading sensors</h1>
       <div id="verdictBody" class="verdict-body"></div>
     </div>
     <div class="tools">
       <p class="fresh" id="fresh"></p>
+      <button type="button" class="tool" id="miniButton" hidden>Small window</button>
       <button type="button" class="tool" id="viewToggle" aria-controls="list">List view</button>
-      <button type="button" class="tool" id="railToggle" aria-controls="rail">Hide detail</button>
+      <button type="button" class="tool" id="railToggle" aria-controls="rail">Show detail</button>
       <button type="button" class="tool" id="settingsToggle" aria-expanded="false" aria-controls="settings">Settings</button>
     </div>
     <section class="settings" id="settings" aria-label="Settings" hidden>
+      <div class="settings-head">
+        <div class="tabs" role="tablist" aria-label="Settings">
+          <button type="button" role="tab" id="tabbtn-readings" data-tab="readings" aria-controls="tab-readings" aria-selected="true">Readings</button>
+          <button type="button" role="tab" id="tabbtn-look" data-tab="look" aria-controls="tab-look" aria-selected="false" tabindex="-1">Look</button>
+          <button type="button" role="tab" id="tabbtn-alerts" data-tab="alerts" aria-controls="tab-alerts" aria-selected="false" tabindex="-1">Alerts</button>
+        </div>
+        <button type="button" class="tool" id="settingsClose">Close</button>
+      </div>
+      <div role="tabpanel" id="tab-readings" aria-labelledby="tabbtn-readings">
       <fieldset>
         <legend>Temperature</legend>
         <label><input type="radio" name="unit" value="C" /> Celsius (°C)</label>
@@ -34,16 +44,35 @@
         <label><input type="radio" name="rate" value="2" /> Twice a second <small>uses about twice as much CPU</small></label>
       </fieldset>
       <fieldset>
-        <legend>Chart</legend>
-        <label><input type="radio" name="chart" value="60" /> Last minute</label>
-        <label><input type="radio" name="chart" value="300" /> Last 5 minutes</label>
-        <label><input type="radio" name="chart" value="900" /> Last 15 minutes</label>
-      </fieldset>
-      <fieldset>
         <legend>Fan icons</legend>
         <label><input type="radio" name="fans" value="spin" /> Spin faster or slower with the fan</label>
         <label><input type="radio" name="fans" value="still" /> Stay still <small>uses the least CPU</small></label>
       </fieldset>
+      </div>
+      <div role="tabpanel" id="tab-look" aria-labelledby="tabbtn-look" hidden>
+      <fieldset>
+        <legend>Board</legend>
+        <label><input type="radio" name="theme" value="green" /> Green</label>
+        <label><input type="radio" name="theme" value="black" /> Matte black</label>
+        <label><input type="radio" name="theme" value="blue" /> Blue</label>
+        <label><input type="radio" name="theme" value="white" /> White</label>
+        <label><input type="checkbox" name="look" value="deco" /> Copper traces, silkscreen outlines, screws and contacts</label>
+      </fieldset>
+      <fieldset>
+        <legend>Readability</legend>
+        <label><input type="radio" name="size" value="small" /> Small</label>
+        <label><input type="radio" name="size" value="normal" /> Normal size</label>
+        <label><input type="radio" name="size" value="large" /> Large</label>
+        <label><input type="checkbox" name="look" value="compact" /> Compact layout <small>less space between the parts</small></label>
+      </fieldset>
+      <fieldset>
+        <legend>Easier to see</legend>
+        <label><input type="checkbox" name="look" value="contrast" /> High contrast</label>
+        <label><input type="checkbox" name="look" value="cb" /> Colours for colour blindness <small>sky, yellow, orange and purple instead of blue to red</small></label>
+        <label><input type="checkbox" name="look" value="anim" /> Animations <small>traces lighting up when the board appears, smooth scrolling</small></label>
+      </fieldset>
+      </div>
+      <div role="tabpanel" id="tab-alerts" aria-labelledby="tabbtn-alerts" hidden>
       <fieldset>
         <legend>Alerts</legend>
         <label><input type="checkbox" name="alert" value="temps" /> High temperatures</label>
@@ -57,6 +86,7 @@
         <label><input type="checkbox" name="alert" value="wear" /> SSD near the end of its life</label>
         <button type="button" class="link" id="resetAlerts">Restore the default alerts</button>
       </fieldset>
+      </div>
       <p class="settings-note" id="exportNote" hidden><button type="button" class="link" id="exportCsv">Export the last 15 minutes as CSV</button></p>
       <p class="settings-note" id="hiddenNote" hidden><span id="hiddenCount"></span> <button type="button" class="link unhide">Show them again</button></p>
       <p class="settings-note">Settings are kept for your Windows account. Names and hidden parts are set in the detail panel.</p>
@@ -68,6 +98,7 @@
       <div class="board" id="board"></div>
       <div class="key">
         <span class="key-item"><i class="key-gold"></i>Gold: how busy it is</span>
+        <span class="key-item"><i class="key-full"></i>Grey bar: how full it is</span>
         <span class="key-item"><i class="key-heat"></i>Colour: how close it is to its limit</span>
         <span class="key-item" id="keyHidden"></span>
         <span class="key-item" id="keyParts" hidden><span id="keyPartsText"></span> <button type="button" class="link unhide">Show them again</button></span>
@@ -77,7 +108,7 @@
     <section class="list-wrap" id="list" aria-label="Every sensor" hidden></section>
 
     <aside class="rail" id="rail" aria-label="Detail of the selected part">
-      <h2 id="railTitle"></h2>
+      <div class="rail-head"><h2 id="railTitle"></h2><button type="button" class="tool" id="railClose" aria-controls="rail">Close</button></div>
       <p class="rail-sub" id="railSub"></p>
       <div class="rail-actions">
         <button type="button" class="link" id="renameToggle" aria-pressed="false">Rename sensors</button>
@@ -87,7 +118,7 @@
         <p class="scope-name" id="scopeName"></p>
         <p class="scope-value" id="scopeValue"></p>
         <canvas id="scope" height="130" role="img" aria-label="Chart of the selected sensor"></canvas>
-        <p class="scope-foot"><span id="scopeSpan">Last minute</span><span id="scopeRange"></span></p>
+        <p class="scope-foot"><span class="span-pick" role="group" aria-label="Chart length"><button type="button" data-span="60">1 min</button><button type="button" data-span="300">5 min</button><button type="button" data-span="900">15 min</button></span><span id="scopeRange"></span></p>
       </div>
       <div class="sensors" id="sensors"></div>
       <button type="button" class="more" id="more" hidden></button>

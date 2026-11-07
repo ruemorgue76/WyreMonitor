@@ -28,11 +28,15 @@ part where it sits on the board and answers the question you opened it for:
   45 °C is fine for a CPU and a lot for a hard disk.
 - **The real layout.** Ryzen and Threadripper chiplets each get their own temperature, and every
   thread has its own load bar. Memory modules sit beside the socket, drives below.
-- **Every sensor, when you want it.** Click any part to see all its readings and a 60-second chart.
+- **Every sensor, when you want it.** Click any part to see all its readings and a chart of the
+  last 1, 5 or 15 minutes.
+- **Read at a glance.** Gold pads show how busy a part is, grey bars how full, and the colour of
+  a reading how close it is to its limit; the part nearest its limit is outlined, and the
+  board's debug display shows the code of what needs attention.
 
 <p align="center">
-  <img src="docs/images/alerts.png" width="100%" alt="The verdict listing a stopped fan and a CPU above its warning threshold" /><br />
-  <sub>How alerts look. The values in this picture were changed by hand to show them.</sub>
+  <img src="docs/images/alerts.png" width="100%" alt="The verdict saying the CPU is above its critical limit, with a link to the CPU and one to change the limit" /><br />
+  <sub>How alerts look. The CPU limit in this picture was lowered by hand to show one.</sub>
 </p>
 
 ## Features
@@ -47,13 +51,17 @@ part where it sits on the board and answers the question you opened it for:
 - Settings: °C or °F, values updated once or twice a second, charts of the last 1, 5 or 15
   minutes, fan icons spinning at their fan's pace or still, and a detail panel you can hide.
   The window reopens where you left it
+- Four board colours (green, matte black, blue, white), colours for colour blindness, high
+  contrast, three sizes and a compact layout; traces, mounting holes and animations can be turned
+  off. The window, the small window and the icon follow the choice
 - Your own names for fans and probes ("Front intake", "VRM"), and parts you don't care about
   hidden from the board
 - Alert limits you can change, and each kind of alert can be turned off
-- Optional: the CPU temperature on the icon next to the clock, and Windows notifications when
-  something needs attention, also with the window closed
+- Optional: a reading of your choice on the icon next to the clock (CPU, graphics card or memory),
+  and Windows notifications when something needs attention, also with the window closed
 - A list view with every sensor, its current, lowest and highest value
-- A small window that stays on top of the others, with CPU, graphics card and memory
+- A small window that stays on top of the others, with CPU, graphics card and memory. The main
+  window, the small one and the icon take turns: one place shows the readings at a time
 - Export of the last 15 minutes of every sensor as a CSV file, for a spreadsheet
 - Update check, from the icon's menu or once a day if you turn it on
 - Own window and an icon next to the clock. It starts with Windows and opens without UAC prompts
@@ -63,7 +71,7 @@ part where it sits on the board and answers the question you opened it for:
 Parts a PC doesn't report are left out of the drawing instead of showing up empty.
 
 <p align="center">
-  <img src="docs/images/detail.png" width="420" alt="Detail panel of an RTX 4090 with a 60-second temperature chart" />
+  <img src="docs/images/detail.png" width="420" alt="Detail panel of a Threadripper 3960X with a one-minute temperature chart" />
 </p>
 
 ## Install
@@ -145,16 +153,22 @@ with how WyreMonitor shows them belong in this repository's [issues](../../issue
 **Can I show temperatures in Fahrenheit?**
 Yes: open **Settings** at the top right and choose Fahrenheit.
 
-**How do I get notifications, or the temperature next to the clock?**
-Right-click the WyreMonitor icon next to the clock and tick *Show the CPU temperature on this
-icon* or *Notify me when something needs attention*. They use the limits and names you set in
-the window. With either one on, the service keeps reading the sensors every 5 seconds with the
-window closed: about 1 % of one core.
+**How do I get notifications, or a reading next to the clock?**
+Right-click the WyreMonitor icon next to the clock. Under *Show on this icon* pick the reading
+(CPU, graphics card or memory: temperature, load or power); a coloured strip tells which part it
+is, gold for the CPU, blue for the graphics card, violet for memory. The icon shows it while both
+windows are closed. *Notify me when something needs attention* works whatever is open. Both use
+the limits and names you set in the window.
+
+**Main window, small window or icon?**
+One at a time. *Small window* in the main window's header swaps it for the small one; a double
+click on the small window brings the main one back. Close both and the icon takes over.
 
 **How much CPU does it use?**
-Measured on a Threadripper 3960X with the window open: about 10 % of one core with the default
-settings, about 6.5 % with still fan icons, and about 17 % when updating twice a second. With the
-window closed, almost nothing.
+Measured on a Threadripper 3960X, in % of one core: main window open about 13 % (less with still
+fan icons, about 17 % when updating twice a second); only the small window about 4 %; only a
+reading on the icon, updated every second, about 2 %; nothing open and nothing on the icon,
+almost nothing. Most of it is reading the CPU and graphics card sensors, not drawing them.
 
 ## Build from source
 

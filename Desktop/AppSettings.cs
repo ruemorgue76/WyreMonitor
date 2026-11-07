@@ -9,7 +9,10 @@ namespace WyreMonitor.Desktop;
 /// </summary>
 internal sealed class AppSettings
 {
-    public bool TrayTemperature { get; set; }
+    /// <summary>The reading drawn on the tray icon (a <see cref="TrayValues"/> key), or null for none.</summary>
+    public string? TrayValue { get; set; }
+    /// <summary>Before 1.4.2: true meant the CPU temperature on the icon. Read once, then dropped.</summary>
+    public bool? TrayTemperature { get; set; }
     public bool Notifications { get; set; }
     public bool MiniWindow { get; set; }
     public int? MiniX { get; set; }
@@ -30,6 +33,9 @@ internal sealed class AppSettings
             {
                 var settings = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(FilePath), Json) ?? new();
                 settings.Page = PageSettings.Sanitize(settings.Page);
+                if (settings.TrayTemperature == true && settings.TrayValue is null) settings.TrayValue = "cpuTemp";
+                settings.TrayTemperature = null;
+                if (TrayValues.Find(settings.TrayValue) is null) settings.TrayValue = null;
                 return settings;
             }
         }
@@ -54,6 +60,29 @@ internal sealed class AppSettings
     }
 }
 
+/// <summary>The readings the tray icon can show: the small window's numbers.</summary>
+internal static class TrayValues
+{
+    public enum Kind { Temperature, Percent, Watts }
+
+    /// <param name="Part">What the service must read for it: cpu, gpu or memory.</param>
+    /// <param name="Field">Its name in the summary from /api/summary.</param>
+    public sealed record Value(string Key, string Label, string Part, string Field, Kind Kind);
+
+    public static readonly Value[] All =
+    [
+        new("cpuTemp", "CPU temperature", "cpu", "cpuTemp", Kind.Temperature),
+        new("cpuLoad", "CPU load", "cpu", "cpuLoad", Kind.Percent),
+        new("cpuPower", "CPU power", "cpu", "cpuPower", Kind.Watts),
+        new("gpuTemp", "GPU temperature", "gpu", "gpuTemp", Kind.Temperature),
+        new("gpuLoad", "GPU load", "gpu", "gpuLoad", Kind.Percent),
+        new("gpuPower", "GPU power", "gpu", "gpuPower", Kind.Watts),
+        new("ramLoad", "Memory use", "memory", "ramLoad", Kind.Percent),
+    ];
+
+    public static Value? Find(string? key) => All.FirstOrDefault(v => v.Key == key);
+}
+
 /// <summary>The page settings the icon next to the clock uses for its temperature and alerts.</summary>
 internal sealed class PageSettings
 {
@@ -64,6 +93,8 @@ internal sealed class PageSettings
     public static readonly string[] LimitKeys = ["cpu", "gpu", "gpuHot", "dimm"];
 
     public string Unit { get; set; } = "C";
+    public string Theme { get; set; } = "green";
+    public string Palette { get; set; } = "standard";
     public Dictionary<string, string> Names { get; set; } = new();
     public List<string> Hidden { get; set; } = new();
     public AlertSettings Alerts { get; set; } = new();
@@ -99,6 +130,8 @@ internal sealed class PageSettings
         var clean = new PageSettings();
         if (page is null) return clean;
         clean.Unit = page.Unit == "F" ? "F" : "C";
+        clean.Theme = page.Theme is "black" or "blue" or "white" ? page.Theme : "green";
+        clean.Palette = page.Palette == "cb" ? "cb" : "standard";
         foreach (var (id, name) in (page.Names ?? new()).Take(MaxEntries))
         {
             var trimmed = name?.Trim() ?? "";

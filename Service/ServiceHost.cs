@@ -103,10 +103,17 @@ internal static class ServiceHost
             return Results.Json(svc.Latest, jsonOptions);
         });
 
-        // The headline numbers only, for the small always-on-top window (every 2 seconds).
-        app.MapGet("/api/summary", (HardwareMonitorService svc) =>
+        // The headline numbers only, for the small window (all parts) and the number on the tray
+        // icon (?part=cpu|gpu|memory: only that part is read every second).
+        app.MapGet("/api/summary", (HttpRequest request, HardwareMonitorService svc) =>
         {
-            svc.NoteSummaryActivity();
+            svc.NoteSummaryActivity(request.Query["part"].ToString() switch
+            {
+                "cpu" => HardwareMonitorService.SummaryPart.Cpu,
+                "gpu" => HardwareMonitorService.SummaryPart.Gpu,
+                "memory" => HardwareMonitorService.SummaryPart.Memory,
+                _ => null,
+            });
             var latest = svc.Latest;
             return Results.Json(new
             {

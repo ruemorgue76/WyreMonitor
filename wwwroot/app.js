@@ -22,9 +22,16 @@ function loadSettings() {
     unit: saved.unit === "F" ? "F" : "C",
     rate: saved.rate === 2 ? 2 : 1,             // readings per second
     fans: saved.fans === "still" ? "still" : "spin",
-    rail: saved.rail !== false,                 // detail panel shown
+    rail: saved.rail === true,                  // detail panel shown: closed until asked for
     chart: [300, 900].includes(saved.chart) ? saved.chart : 60,   // seconds shown in the chart
     view: saved.view === "list" ? "list" : "board",
+    theme: ["black", "blue", "white"].includes(saved.theme) ? saved.theme : "green",
+    size: ["small", "large"].includes(saved.size) ? saved.size : "normal",
+    cb: saved.cb === true,                      // colours for colour blindness
+    contrast: saved.contrast === true,
+    compact: saved.compact === true,
+    deco: saved.deco !== false,                 // copper traces, mounting holes, contacts
+    anim: saved.anim !== false,
     names: cleanNames(saved.names),             // sensor id -> name chosen by the user
     hidden: cleanHidden(saved.hidden),          // part names and fan sensor ids left off the board
     alerts: cleanAlerts(saved.alerts),
@@ -72,6 +79,7 @@ function mirrorToApp() {
   try {
     window.chrome?.webview?.postMessage({
       type: "settings", unit: settings.unit, names: settings.names, hidden: settings.hidden, alerts: settings.alerts,
+      theme: settings.theme, palette: settings.cb ? "cb" : "standard",
     });
   } catch { /* not in the app window */ }
 }
@@ -150,6 +158,18 @@ const SENSOR_NAMES = [
   [/^Memory Used$/, "Used"],
   [/^Memory Available$/, "Available"],
   [/^Memory$/, "Usage"],
+  [/^Core \(Tctl\/Tdie\)$/, "CPU temperature"],
+  [/^Core \(Tctl\)$/, "CPU temperature"],
+  [/^CPU Package$/, "CPU temperature"],
+  [/^CCD(\d+) \(Tdie\)$/, "Chiplet CCD$1"],
+  [/^CCDs Max \(Tdie\)$/, "Hottest chiplet"],
+  [/^CCDs Average \(Tdie\)$/, "Chiplet average"],
+  [/^Core \(SVI2 TFN\)$/, "Core voltage"],
+  [/^SoC \(SVI2 TFN\)$/, "SoC voltage"],
+  [/^Bus Speed$/, "Bus clock"],
+  [/^GPU Core$/, "GPU"],
+  [/^GPU Hot Spot$/, "Hot spot"],
+  [/^GPU Memory Junction$/, "Memory junction"],
 ];
 
 function sensorLabel(name) {
@@ -184,14 +204,20 @@ function isSecondary(s) {
 // ---- Heat colour ----------------------------------------------------------------
 // Depends on how close a reading is to the limit of THAT part, not on absolute degrees:
 // 45 °C is fine for a CPU and a lot for a hard disk.
-const RAMP = [
-  [0.40, [125, 184, 196]],
-  [0.70, [214, 212, 138]],
-  [1.00, [242, 169, 59]],
-  [1.15, [255, 92, 51]],
-];
+// Standard: cool blue, warm white, orange, red: no stop near the gold that means load. For colour blindness (Okabe-Ito): sky, yellow, orange, purple,
+// whose lightness steps stay apart for red-green deficiencies too.
+const RAMPS = {
+  standard: [[0.40, [125, 184, 196]], [0.70, [222, 222, 200]], [1.00, [255, 138, 61]], [1.15, [255, 92, 51]]],
+  cb: [[0.40, [86, 180, 233]], [0.70, [240, 228, 66]], [1.00, [230, 159, 0]], [1.15, [204, 121, 167]]],
+};
+
+// The heat colour for a reading, or "" (the plain text colour) while it is comfortably below its
+// warning threshold: colour appears only when it means something.
+const HUE_FROM = 0.7;
+function hue(temp, warn) { return temp / warn >= HUE_FROM ? heat(temp, warn) : ""; }
 
 function heat(temp, warn) {
+  const RAMP = RAMPS[settings.cb ? "cb" : "standard"];
   const r = temp / warn;
   if (r <= RAMP[0][0]) return `rgb(${RAMP[0][1].join(",")})`;
   for (let i = 1; i < RAMP.length; i++) {
@@ -375,6 +401,13 @@ const state = {
   listRows: new Map(),  // sensor id -> cells of the list view
   listKey: "",          // what the list was built from
   longHistory: null,   // { id, values }: the charted sensor over more than a minute
+  hotNets: new Set(),  // trace nets reaching a part with an alert
+  level: "off",        // the verdict's state: ok, warn, crit, or off (loading, no data)
+  code: "",            // the debug display: the code of the part that needs checking
+  announced: "",       // what the screen-reader live region last said (the state, not the values)
+  spun: new Set(),     // fan headers seen turning since the window opened
+  incident: null,      // the alert in progress: { label, peak, kind, start }
+  recovered: null,     // the last one that cleared, shown for a while: { ..., end }
 };
 
 const $ = (id) => document.getElementById(id);
@@ -441,24 +474,28 @@ function buildCpu(m) {
       <span class="stat"><b id="cpuPower"></b></span>
       <span class="stat"><b id="cpuClock"></b></span>
     </span>`;
+  // The socket's retention frame: Threadripper and EPYC sockets close with three numbered screws.
+  const screws = /threadripper|epyc/i.test(m.cpu.name)
+    ? `<i class="screw" data-n="1" aria-hidden="true"></i><i class="screw" data-n="2" aria-hidden="true"></i><i class="screw" data-n="3" aria-hidden="true"></i>`
+    : "";
   if (dies.length > 1) {
     // Chiplets around the I/O die, as they sit under the heat spreader.
     const half = Math.ceil(dies.length / 2);
-    return `<button type="button" class="part cpu" data-sel="${esc(m.cpu.name)}">
+    return `<button type="button" class="part cpu court" data-ref="U1 · CPU" data-sel="${esc(m.cpu.name)}" aria-label="${esc(shortCpuName(m.cpu.name))}">${screws}
       <span class="die-col">${dies.slice(0, half).map(buildDie).join("")}</span>
       ${info}
       <span class="die-col">${dies.slice(half).map(buildDie).join("")}</span>
     </button>`;
   }
-  return `<button type="button" class="part cpu single" data-sel="${esc(m.cpu.name)}">
+  return `<button type="button" class="part cpu single court" data-ref="U1 · CPU" data-sel="${esc(m.cpu.name)}" aria-label="${esc(shortCpuName(m.cpu.name))}">${screws}
     ${info}<span class="die-col">${buildDie(dies[0])}</span>
   </button>`;
 }
 
 function buildGpu(g) {
   const r = gpuReadings(g);
-  const cell = (label, key, meter) => `<span class="stat-cell"><span class="designator">${label}</span><b data-gpu="${key}"></b>${
-    meter ? `<span class="meter"><i data-gpubar="${key}"></i></span>` : ""}</span>`;
+  const cell = (label, key, meter, full = false) => `<span class="stat-cell"><span class="designator">${label}</span><b data-gpu="${key}"></b>${
+    meter ? `<span class="meter${full ? " full" : ""}"><i data-gpubar="${key}"></i></span>` : ""}</span>`;
   return `<button type="button" class="part gpu" data-sel="${esc(g.name)}">
     ${r.fans.length ? `<span class="gpu-fans">${r.fans.map((s) => `<span data-gpufan="${esc(s.id)}">${ROTOR}</span>`).join("")}</span>` : ""}
     <span>
@@ -467,7 +504,7 @@ function buildGpu(g) {
     </span>
     <span class="gpu-stats">
       ${r.load !== null ? cell("Load", "load", true) : ""}
-      ${r.vramUsed !== null ? cell("Video memory", "vram", r.vramTotal !== null) : ""}
+      ${r.vramUsed !== null ? cell("Video memory", "vram", r.vramTotal !== null, true) : ""}
       ${r.power !== null ? cell("Power", "power") : ""}
       ${r.hot !== null ? cell("Hot spot", "hot") : ""}
     </span>
@@ -476,23 +513,26 @@ function buildGpu(g) {
 
 function buildDimm(g) {
   const n = g.name.match(/\(#(\d+)\)$/)[1];
+  // Eight memory chips on the stick: they take the module's heat colour.
   return `<button type="button" class="part dimm" data-sel="${esc(g.name)}" data-dimm="${esc(g.name)}" title="${esc(g.name)}">
-    <span class="temp"></span><span class="designator">DIMM${n}</span>
+    <span class="temp"></span><span class="chips" aria-hidden="true">${"<i></i>".repeat(8)}</span><span class="designator">DIMM${n}</span>
   </button>`;
 }
 
 function buildDrive(d, i) {
   return `<button type="button" class="part drive ${d.kind === "nvme" ? "m2" : "sata"}" data-sel="${esc(d.group.name)}" data-drive="${i}" title="${esc(d.group.name)}">
     <span class="drive-head"><span class="drive-name">${esc(d.short)}</span><span class="drive-temp"></span></span>
-    <span class="meter"><i></i></span>
+    <span class="meter full"><i></i></span>
     <span class="drive-note"></span>
   </button>`;
 }
 
-function boardChip(g) {
+// Temperature probes on the motherboard, read by its Super I/O chip: named in plain words, the
+// chip's model only in the tooltip and the detail panel. Two chips: A and B, as their fan banks.
+function boardChip(g, i, all) {
   const chip = lastSegment(g.name).split("/")[0].replace(/^ITE /, "").replace(/^Nuvoton /, "");
-  return `<button type="button" class="part chip grow" data-sel="${esc(g.name)}" data-probe="${esc(g.name)}">
-    <span class="designator">${esc(chip)} sensors</span>
+  return `<button type="button" class="part chip grow sio" data-sel="${esc(g.name)}" data-probe="${esc(g.name)}" title="Temperature probes read by the ${esc(chip)} chip">
+    <span class="designator">Board probes${all.length > 1 ? ` ${String.fromCharCode(65 + i)}` : ""}</span>
     <span class="big" data-hot></span>
     <span class="note" data-probecount></span>
     <span class="probes" data-probes></span>
@@ -534,53 +574,80 @@ function buildBoard(m) {
 
   board.innerHTML = `
     <svg class="traces" id="traces" aria-hidden="true"></svg>
-    <p class="brand">${esc(motherboard?.name ?? m.snapshot.machineName ?? "This PC")}</p>
-    ${m.fans.length ? `<div class="fans">${m.fans.map((f) => `
+    <p class="brand"><span>${esc(motherboard?.name ?? m.snapshot.machineName ?? "This PC")}</span>
+      <span class="qcode" aria-hidden="true"><i class="led"></i><b id="qcode"></b><small>DEBUG</small></span></p>
+    <span class="maker" aria-hidden="true">WYREMONITOR</span>
+    ${m.fans.length ? `<div class="fans">${fanBanks(m).map((bank) => `
+      <div class="bank court" data-ref="${esc(bank.ref)}" style="--n: ${bank.fans.length}">${bank.fans.map((f) => `
       <button type="button" class="part fan" data-sel="${esc(f.group.name)}" data-chart="${esc(f.sensor.id)}" data-fan="${esc(f.sensor.id)}" title="${esc(lastSegment(f.group.name))}, ${esc(f.sensor.name)}">
         ${ROTOR}<span><span class="designator" title="Fan ${esc(f.label)}">${esc(fanName(f))}</span><span class="val"></span></span>
-      </button>`).join("")}</div>` : ""}
-    ${m.dimms.length ? `<div class="dimms l">${m.dimms.slice(0, half).map(buildDimm).join("")}</div>` : ""}
+      </button>`).join("")}</div>`).join("")}</div>` : ""}
+    ${m.dimms.length ? `<div class="dimms l court" data-ref="DRAM">${m.dimms.slice(0, half).map(buildDimm).join("")}</div>` : ""}
     ${buildCpu(m)}
-    ${m.dimms.length ? `<div class="dimms r">${m.dimms.slice(half).map(buildDimm).join("")}</div>` : ""}
-    ${m.gpus.length ? `<div class="gpus">${m.gpus.map(buildGpu).join("")}</div>` : ""}
-    <div class="side">
+    ${m.dimms.length ? `<div class="dimms r court" data-ref="DRAM">${m.dimms.slice(half).map(buildDimm).join("")}</div>` : ""}
+    ${m.gpus.length ? `<div class="gpus court" data-ref="${m.gpus.some((g) => g.type !== "GpuIntel") ? "PCIE · GRAPHICS" : "GRAPHICS"}">${m.gpus.map(buildGpu).join("")}</div>` : ""}
+    <div class="side court" data-ref="MEMORY · PROBES">
       ${m.memory ? `<button type="button" class="part chip" data-sel="${esc(m.memory.name)}">
         <span class="designator">Memory</span>
         <span class="big" id="ramLoad"></span>
-        <span class="meter"><i id="ramBar"></i></span>
+        <span class="meter full"><i id="ramBar"></i></span>
         <span class="note" id="ramNote"></span>
       </button>` : ""}
       ${m.battery ? `<button type="button" class="part chip" data-sel="${esc(m.battery.name)}">
         <span class="designator">Battery</span>
         <span class="big" id="batteryLevel"></span>
-        <span class="meter"><i id="batteryBar"></i></span>
+        <span class="meter full"><i id="batteryBar"></i></span>
         <span class="note" id="batteryNote"></span>
       </button>` : ""}
       ${m.boards.filter((g) => g.sensors.some(isRealTemp)).map(boardChip).join("")}
     </div>
     ${m.drives.length ? `<div class="store">
-      ${nvme.length ? `<div class="store-row m2-row">${nvme.map(([d, i]) => buildDrive(d, i)).join("")}</div>` : ""}
-      ${sata.length ? `<div class="store-row sata-row">${sata.map(([d, i]) => buildDrive(d, i)).join("")}</div>` : ""}
+      ${nvme.length ? `<div class="store-row m2-row court" data-ref="M.2">${nvme.map(([d, i]) => buildDrive(d, i)).join("")}</div>` : ""}
+      ${sata.length ? `<div class="store-row sata-row court" data-ref="SATA">${sata.map(([d, i]) => buildDrive(d, i)).join("")}</div>` : ""}
     </div>` : ""}`;
 
+  paintQcode();
   drawTraces();
 }
 
-// Copper traces: link the CPU to what is really wired to it.
+// The board's debug display mirrors the verdict: "OK", or the number of things to check.
+function paintQcode() {
+  setText($("qcode"), { ok: "OK", warn: state.code, crit: state.code }[state.level] ?? "--");
+}
+
+// Fan headers by controller (A = first chip, B = second), labelled as on the board.
+function fanBanks(m) {
+  const banks = [];
+  for (const f of m.fans) {
+    let bank = banks.find((b) => b.group === f.group);
+    if (!bank) {
+      const chip = lastSegment(f.group.name).split("/")[0].replace(/^ITE /, "").replace(/^Nuvoton /, "");
+      bank = { group: f.group, ref: `FAN_${f.label[0]} · ${chip}`, fans: [] };
+      banks.push(bank);
+    }
+    bank.fans.push(f);
+  }
+  return banks;
+}
+
+// Copper traces: link the CPU to what is really wired to it. Each group of traces is a net that
+// takes the alert colour while one of the parts it reaches raises an alert.
 function drawTraces() {
   const board = $("board");
   const svg = $("traces");
   if (!svg || getComputedStyle(svg).display === "none") return;
   const origin = board.getBoundingClientRect();
+  const z = origin.width / board.offsetWidth || 1;   // the page's size setting (CSS zoom)
   const box = (el) => {
     const r = el.getBoundingClientRect();
-    return { l: r.left - origin.left, r: r.right - origin.left, t: r.top - origin.top, b: r.bottom - origin.top };
+    return { l: (r.left - origin.left) / z, r: (r.right - origin.left) / z, t: (r.top - origin.top) / z, b: (r.bottom - origin.top) / z };
   };
   const cpuEl = board.querySelector(".cpu");
   if (!cpuEl) { svg.innerHTML = ""; return; }
 
   const cpu = box(cpuEl);
-  const paths = [];
+  const nets = {};   // net name -> path data
+  const add = (net, d) => (nets[net] ??= []).push(d);
 
   // Memory channels, towards the modules on both sides.
   for (const el of board.querySelectorAll(".dimms")) {
@@ -588,38 +655,66 @@ function drawTraces() {
     const fromLeft = d.r <= cpu.l;
     const x1 = fromLeft ? d.r : cpu.r;
     const x2 = fromLeft ? cpu.l : d.l;
-    for (let i = 0; i < 6; i++) paths.push(`M${x1} ${cpu.t + (cpu.b - cpu.t) * (0.2 + i * 0.12)}H${x2}`);
+    for (let i = 0; i < 6; i++) add(fromLeft ? "dimms-l" : "dimms-r", `M${x1} ${cpu.t + (cpu.b - cpu.t) * (0.2 + i * 0.12)}H${x2}`);
   }
   // PCIe lanes towards the graphics card.
   const gpuEl = board.querySelector(".gpu");
   if (gpuEl) {
     const g = box(gpuEl);
     const mid = (cpu.l + cpu.r) / 2;
-    for (let i = -5; i <= 5; i++) paths.push(`M${mid + i * 12} ${cpu.b}V${g.t}`);
+    for (let i = -5; i <= 5; i++) add("gpu", `M${mid + i * 12} ${cpu.b}V${g.t}`);
   }
-  // Towards the side column and the drives.
+  // Towards the side column and the drives: a 45° bend where the column steps down, as boards route.
   const sideEl = board.querySelector(".side");
   const storeEl = board.querySelector(".store");
   if (sideEl) {
     const s = box(sideEl);
-    for (let i = 0; i < 3; i++) paths.push(`M${cpu.r} ${cpu.t + 22 + i * 8}H${s.l}`);
+    for (let i = 0; i < 3; i++) add("side", `M${cpu.r} ${cpu.t + 22 + i * 8}H${s.l}`);
     if (storeEl) {
       const st = box(storeEl);
       const x0 = (s.l + s.r) / 2;
-      for (let i = -3; i <= 3; i++) paths.push(`M${x0 + i * 12} ${s.b}V${st.t}`);
+      for (let i = -3; i <= 3; i++) add("store", `M${x0 + i * 12} ${s.b}V${st.t}`);
     }
   }
 
-  svg.innerHTML = paths.map((d) => `<path d="${d}" pathLength="1"/>`).join("");
+  // Each trace ends on a via: a small plated ring.
+  const vias = (d) => {
+    const m = d.match(/^M([\d.-]+) ([\d.-]+)([HV])([\d.-]+)$/);
+    if (!m) return "";
+    const [x, y] = [+m[1], +m[2]];
+    const [x2, y2] = m[3] === "H" ? [+m[4], y] : [x, +m[4]];
+    return `<circle cx="${x}" cy="${y}" r="2.4"/><circle cx="${x2}" cy="${y2}" r="2.4"/>`;
+  };
+  svg.innerHTML = Object.entries(nets).map(([net, list]) =>
+    `<g data-net="${net}">${list.map((d) => `<path d="${d}" pathLength="1"/>`).join("")}${list.map(vias).join("")}</g>`).join("");
+  paintNets();
 
   // The page's single moment of motion: the traces light up on first load.
-  if (!state.tracesDrawn && !REDUCED_MOTION) {
+  if (!state.tracesDrawn && motionOn()) {
     for (const p of svg.querySelectorAll("path")) {
       p.animate([{ strokeDasharray: "1", strokeDashoffset: 1 }, { strokeDasharray: "1", strokeDashoffset: 0 }],
         { duration: 700, easing: "ease-out" });
     }
   }
   state.tracesDrawn = true;
+}
+
+// The nets reaching a part with an alert take the alert colour (state.hotNets, set by updateBoard).
+function paintNets() {
+  for (const g of document.querySelectorAll("#traces g[data-net]")) g.classList.toggle("hot", state.hotNets.has(g.dataset.net));
+}
+
+function netsFor(m, alerts) {
+  const hot = new Set();
+  const half = Math.ceil(m.dimms.length / 2);
+  for (const a of alerts) {
+    const dimm = m.dimms.findIndex((g) => g.name === a.target);
+    if (dimm >= 0) hot.add(dimm < half ? "dimms-l" : "dimms-r");
+    else if (m.gpus.some((g) => g.name === a.target)) hot.add("gpu");
+    else if (m.drives.some((d) => d.group.name === a.target)) hot.add("store");
+    else if (m.boards.some((g) => g.name === a.target) || m.memory?.name === a.target) hot.add("side");
+  }
+  return hot;
 }
 
 // ---- Updating values (without rebuilding the DOM) ----------------------------------
@@ -633,6 +728,10 @@ function valueHtml(el, text, unit, color) {
   el.style.color = text === null ? "" : (color ?? "");
 }
 
+function name(el, text) {
+  if (el && el.getAttribute("aria-label") !== text) el.setAttribute("aria-label", text);
+}
+
 function bar(el, fraction) {
   if (el) el.style.transform = `scaleX(${Math.max(0, Math.min(1, fraction))})`;
 }
@@ -644,7 +743,7 @@ function updateBoard(m) {
 
   if (m.cpu) {
     const limit = cpuLimits(m.cpu);
-    valueHtml($("cpuTemp"), s.cpuTemp == null ? null : fixed(toUnit(s.cpuTemp)), degrees(), s.cpuTemp == null ? null : heat(s.cpuTemp, limit.warn));
+    valueHtml($("cpuTemp"), s.cpuTemp == null ? null : fixed(toUnit(s.cpuTemp)), degrees(), s.cpuTemp == null ? null : hue(s.cpuTemp, limit.warn));
     setText($("cpuLoad"), s.cpuLoad == null ? "n/a" : `${fixed(s.cpuLoad)} %`);
     setText($("cpuPower"), s.cpuPower == null ? "n/a" : `${fixed(s.cpuPower)} W`);
     const avg = find(m.cpu, "Clock", /^Cores \(Average\)$/)?.value ?? s.cpuClock;
@@ -658,10 +757,10 @@ function updateBoard(m) {
       const t = byId.get(el.dataset.dietemp);
       const label = el.querySelector("[data-dielabel]");
       if (t && t.value > 0) {
-        const c = heat(t.value, limit.warn);
+        const c = hue(t.value, limit.warn);
         setText(label, temp(t.value));
         label.style.color = c;
-        el.style.background = `color-mix(in srgb, ${c} 16%, #20282a)`;
+        el.style.background = c ? `color-mix(in srgb, ${c} 16%, var(--epoxy-up))` : "";
       } else {
         setText(label, "");
       }
@@ -673,7 +772,7 @@ function updateBoard(m) {
     if (!el) continue;
     const r = gpuReadings(g);
     const q = (key) => el.querySelector(`[data-gpu="${key}"]`);
-    valueHtml(q("temp"), r.temp == null ? null : fixed(toUnit(r.temp)), degrees(), r.temp == null ? null : heat(r.temp, limit("gpu").warn));
+    valueHtml(q("temp"), r.temp == null ? null : fixed(toUnit(r.temp)), degrees(), r.temp == null ? null : hue(r.temp, limit("gpu").warn));
     setText(q("load"), r.load == null ? "n/a" : `${fixed(r.load)} %`);
     bar(el.querySelector('[data-gpubar="load"]'), (r.load ?? 0) / 100);
     setText(q("vram"), r.vramUsed == null ? "n/a"
@@ -682,7 +781,7 @@ function updateBoard(m) {
     setText(q("power"), r.power == null ? "n/a" : `${fixed(r.power)} W`);
     const hotEl = q("hot");
     setText(hotEl, r.hot == null ? "n/a" : temp(r.hot));
-    if (hotEl && r.hot != null) hotEl.style.color = heat(r.hot, limit("gpuHot").warn);
+    if (hotEl && r.hot != null) hotEl.style.color = hue(r.hot, limit("gpuHot").warn);
     for (const f of r.fans) setFanIcon(el.querySelector(`[data-gpufan="${CSS.escape(f.id)}"]`), f.value);
   }
 
@@ -690,8 +789,15 @@ function updateBoard(m) {
     const el = board.querySelector(`[data-fan="${CSS.escape(f.sensor.id)}"]`);
     if (!el) continue;
     const on = f.sensor.value > 0;
+    if (f.sensor.value > 200 || (f.sensor.history ?? []).some((v) => v > 200)) state.spun.add(f.sensor.id);
+    // A header that has not turned since the window opened is an empty socket: drawn as its pins,
+    // quiet. "Stopped" is kept for a fan that was turning.
+    const spun = state.spun.has(f.sensor.id);
+    el.classList.toggle("empty", !on && !spun);
     setFanIcon(el, f.sensor.value);
-    setText(el.querySelector(".val"), on ? `${fixed(f.sensor.value)} RPM` : "Stopped");
+    const text = on ? `${fixed(f.sensor.value)} RPM` : spun ? "Stopped" : "0 rpm";
+    setText(el.querySelector(".val"), text);
+    name(el, `${fanName(f)}, ${on ? text : spun ? "stopped" : "not turning"}`);
   }
 
   for (const g of m.dimms) {
@@ -700,7 +806,9 @@ function updateBoard(m) {
     if (!label) continue;
     if (t) {
       setText(label, temp(t.value));
-      label.style.color = heat(t.value, limit("dimm").warn);
+      const c = hue(t.value, limit("dimm").warn);
+      label.style.color = c;
+      label.parentElement.style.setProperty("--chip", c ? `color-mix(in srgb, ${c} 22%, var(--epoxy-up))` : "var(--epoxy-up)");
     } else {
       const capacity = find(g, "Data", /^Capacity$/);
       setText(label, capacity ? formatBytes(capacity.value) : "");
@@ -734,15 +842,16 @@ function updateBoard(m) {
     const hotEl = part.querySelector("[data-hot]");
     if (!temps.length) { valueHtml(hotEl, null, ""); continue; }
     const hot = Math.max(...temps.map((x) => x.value));
-    valueHtml(hotEl, fixed(toUnit(hot)), degrees(), heat(hot, LIMITS.board.warn));
+    valueHtml(hotEl, fixed(toUnit(hot)), degrees(), hue(hot, LIMITS.board.warn));
     setText(part.querySelector("[data-probecount]"), `hottest of ${temps.length}`);
     const probes = part.querySelector("[data-probes]");
     if (probes.children.length !== temps.length) {
       probes.replaceChildren(...temps.map(() => document.createElement("span")));
     }
     temps.forEach((t, i) => {
-      setText(probes.children[i], `${fixed(toUnit(t.value))}°`);
-      probes.children[i].style.color = heat(t.value, LIMITS.board.warn);
+      setText(probes.children[i], temp(t.value));
+      probes.children[i].dataset.p = settings.names[t.id] ?? t.name.replace(/^Temperature #(\d+)$/, "Probe $1");
+      probes.children[i].style.color = hue(t.value, LIMITS.board.warn);
       probes.children[i].title = displayName(t);
     });
   }
@@ -750,10 +859,11 @@ function updateBoard(m) {
   m.drives.forEach((d, i) => {
     const el = board.querySelector(`[data-drive="${i}"]`);
     if (!el) return;
+    name(el, `${d.short}${d.temp ? `, ${temp(d.temp.value)}` : ""}${d.free ? `, ${formatBytes(d.free.value)} free of ${formatBytes(d.total.value)}` : ""}`);
     const tempEl = el.querySelector(".drive-temp");
     if (d.temp) {
       setText(tempEl, temp(d.temp.value));
-      tempEl.style.color = heat(d.temp.value, d.limit.warn);
+      tempEl.style.color = hue(d.temp.value, d.limit.warn);
     }
     el.querySelector(".meter i").style.transform = `scaleX(${(d.used?.value ?? 0) / 100})`;
     const freeRatio = d.free && d.total.value ? d.free.value / d.total.value : 1;
@@ -764,6 +874,35 @@ function updateBoard(m) {
       d.free ? `${formatBytes(d.free.value)} free of ${formatBytes(d.total.value)}${extra.length ? `, ${extra.join(", ")}` : ""}` : "");
   });
 
+  // Accessible names that carry the readings (the visible numbers are scattered across each part).
+  if (m.cpu && s.cpuTemp != null) {
+    name(board.querySelector(".cpu"), `${shortCpuName(m.cpu.name)}, ${temp(s.cpuTemp)}${s.cpuLoad != null ? `, ${fixed(s.cpuLoad)} % load` : ""}${s.cpuPower != null ? `, ${fixed(s.cpuPower)} W` : ""}`);
+  }
+  for (const g of m.gpus) {
+    const r = gpuReadings(g);
+    name(board.querySelector(`.gpu[data-sel="${CSS.escape(g.name)}"]`),
+      `${shortGpuName(g.name)}${r.temp != null ? `, ${temp(r.temp)}` : ""}${r.load != null ? `, ${fixed(r.load)} % load` : ""}`);
+  }
+  for (const g of m.dimms) {
+    const el = board.querySelector(`[data-dimm="${CSS.escape(g.name)}"]`);
+    const t = g.sensors.find((x) => isRealTemp(x) && /^DIMM/.test(x.name)) ?? g.sensors.find(isRealTemp);
+    name(el, `Memory module ${g.name.match(/#\d+/)?.[0] ?? ""}${t ? `, ${temp(t.value)}` : ""}`);
+  }
+
+  // The part closest to its own limit carries a stronger outline: the board always has a focus.
+  let focal = null, worst = -1;
+  const consider = (el, value, warn) => { if (el && value != null && value / warn > worst) { worst = value / warn; focal = el; } };
+  if (m.cpu) consider(board.querySelector(".cpu"), s.cpuTemp, cpuLimits(m.cpu).warn);
+  for (const g of m.gpus) consider(board.querySelector(`.gpu[data-sel="${CSS.escape(g.name)}"]`), gpuReadings(g).temp, limit("gpu").warn);
+  for (const g of m.dimms) {
+    const t = g.sensors.find((x) => isRealTemp(x) && /^DIMM/.test(x.name));
+    consider(board.querySelector(`[data-dimm="${CSS.escape(g.name)}"]`), t?.value, limit("dimm").warn);
+  }
+  m.drives.forEach((d, i) => consider(board.querySelector(`[data-drive="${i}"]`), d.temp?.value, d.limit.warn));
+  if (worst < 0.7) focal = null;   // only a part getting near its limit, as hue() colours it
+  for (const el of board.querySelectorAll(".part.focal")) if (el !== focal) el.classList.remove("focal");
+  focal?.classList.add("focal");
+
   // When the chart shows a fan, only that fan is highlighted, not its controller.
   const chartIsFan = m.fans.some((f) => f.sensor.id === state.chartId);
   for (const el of board.querySelectorAll("[data-sel]")) {
@@ -771,6 +910,9 @@ function updateBoard(m) {
     const on = el.dataset.fan ? sameGroup && el.dataset.fan === state.chartId : sameGroup && !chartIsFan;
     el.setAttribute("aria-pressed", on ? "true" : "false");
   }
+
+  const hotNets = netsFor(m, m.snapshot.ready === false ? [] : collectAlerts(m));
+  if ([...hotNets].join() !== [...state.hotNets].join()) { state.hotNets = hotNets; paintNets(); }
 
   setText($("keyHidden"), m.hiddenReaders ? `${m.hiddenReaders} empty card ${m.hiddenReaders === 1 ? "reader" : "readers"} hidden` : "");
   const parts = m.hiddenParts ? `${m.hiddenParts} ${m.hiddenParts === 1 ? "part" : "parts"} hidden by you.` : "";
@@ -783,14 +925,16 @@ function updateBoard(m) {
 // ---- Verdict ----------------------------------------------------------------------
 function collectAlerts(m) {
   const alerts = [];
-  const add = (sev, title, detail, target) => alerts.push({ sev, title, detail, target });
+  const add = (sev, title, detail, target, extra = {}) => alerts.push({ sev, title, detail, target, ...extra });
   const s = m.snapshot.summary;
 
   const on = settings.alerts;
   const checkTemp = (value, limit, label, target) => {
     if (value == null || !on.temps) return;
-    if (value >= limit.crit) add(2, `${label} at ${temp(value)}`, `Above the critical limit of ${temp(limit.crit)}.`, target);
-    else if (value >= limit.warn) add(1, `${label} at ${temp(value)}`, `Above the warning threshold of ${temp(limit.warn)}.`, target);
+    const act = "Check its cooling, or change the limit in Settings.";
+    const extra = { kind: "temp", label, value };
+    if (value >= limit.crit) add(2, `${label} at ${temp(value)}`, `Above the critical limit of ${temp(limit.crit)}. ${act}`, target, extra);
+    else if (value >= limit.warn) add(1, `${label} at ${temp(value)}`, `Above the warning threshold of ${temp(limit.warn)}. ${act}`, target, extra);
   };
 
   if (m.cpu) checkTemp(s.cpuTemp, cpuLimits(m.cpu), "CPU", m.cpu.name);
@@ -810,12 +954,12 @@ function collectAlerts(m) {
       const ratio = d.free.value / d.total.value;
       if (ratio < FREE_WARN) {
         add(ratio < FREE_CRIT ? 2 : 1, "Windows drive almost full",
-          `${formatBytes(d.free.value)} free of ${formatBytes(d.total.value)}.`, d.group.name);
+          `${formatBytes(d.free.value)} free of ${formatBytes(d.total.value)}. Free some space: Windows slows down and updates fail when it runs out.`, d.group.name);
       }
     }
     if (on.wear && d.life && d.life.value <= LIFE_WARN) {
       add(d.life.value <= LIFE_CRIT ? 2 : 1, `SSD ${d.short} near end of life`,
-        `Remaining life ${fixed(d.life.value)} %.`, d.group.name);
+        `Remaining life ${fixed(d.life.value)} %. Back up its data and plan a replacement.`, d.group.name);
     }
   }
   // A fan that was spinning and stopped. Graphics card fans are left out: they stop on purpose.
@@ -823,20 +967,32 @@ function collectAlerts(m) {
     const h = f.sensor.history ?? [];
     const recent = h.slice(-5);
     if (recent.length === 5 && recent.every((v) => v === 0) && h.some((v) => v > 200)) {
-      add(2, `${fanName(f)} stopped`, "It was spinning a moment ago.", f.group.name);
+      add(2, `${fanName(f)} stopped`, "It was spinning a moment ago. Check its cable and that nothing blocks it.", f.group.name, { label: fanName(f), code: `F${f.label[0]}` });
     }
   }
   return alerts.sort((a, b) => b.sev - a.sev);
 }
 
-function renderVerdict(title, bodyHtml, key, alerts = []) {
+function renderVerdict(title, bodyHtml, key, alerts = [], level = "off", code = "") {
   if (state.verdictKey === key) return;
   state.verdictKey = key;
+  // The state is shown before any word: the headline's mark and the board's debug display.
+  state.level = level;
+  state.code = code;
+  document.body.dataset.state = level;
+  paintQcode();
+  // Screen readers hear the state when it changes, not every degree of every reading.
+  const spoken = `${level}|${alerts.map((a) => a.target + a.sev).join()}|${level === "off" ? title : ""}`;
+  if (spoken !== state.announced) {
+    state.announced = spoken;
+    setText($("announce"), level === "ok" ? "All clear" : title);
+  }
   setText($("verdictTitle"), title);
   $("verdictBody").innerHTML = bodyHtml;
   $("verdictBody").querySelectorAll("[data-alert]").forEach((b) => {
     b.addEventListener("click", () => select(alerts[+b.dataset.alert].target));
   });
+  $("verdictBody").querySelector("[data-limits]")?.addEventListener("click", () => openSettings(true, "alerts"));
 }
 
 function updateVerdict(m) {
@@ -864,17 +1020,49 @@ function updateVerdict(m) {
     if (s.cpuTemp != null) parts.push(`CPU at ${temp(s.cpuTemp)}`);
     const gpuTemp = m.gpus.length ? gpuReadings(m.gpus[0]).temp : null;
     if (gpuTemp != null) parts.push(`GPU at ${temp(gpuTemp)}`);
-    if (m.fans.length) parts.push(`${m.fans.filter((f) => f.sensor.value > 0).length} of ${m.fans.length} fans spinning`);
+    // Stopped fans are left out: many boards have empty headers, and one that stops raises its own alert.
+    const spinning = m.fans.filter((f) => f.sensor.value > 0).length;
+    if (spinning) parts.push(`${spinning} ${spinning === 1 ? "fan" : "fans"} spinning`);
     const text = parts.length ? `${parts.join(", ")}.` : "";
-    renderVerdict("All clear", `<span>${esc(text)}</span>`, `ok:${text}`);
+    // An alert that cleared stays in view for a while: the end of the incident, not just silence.
+    if (state.incident) { state.recovered = { ...state.incident, end: Date.now() }; state.incident = null; }
+    if (state.recovered && Date.now() - state.recovered.end > RECOVERED_FOR) state.recovered = null;
+    const r = state.recovered;
+    const clock = (t) => new Date(t).toLocaleTimeString(LOCALE, { hour: "2-digit", minute: "2-digit" });
+    const back = r ? (r.kind === "temp"
+      ? `${r.label} peaked at ${temp(r.peak)} at ${clock(r.start)} · back to normal at ${clock(r.end)}.`
+      : `${r.label} at ${clock(r.start)} · back to normal at ${clock(r.end)}.`) : "";
+    renderVerdict("All clear", `<span>${esc(text)}</span>${back ? `<span class="recovered">${esc(back)}</span>` : ""}`,
+      `ok:${text}|${back}`, [], "ok");
     return;
   }
 
-  const lower = (t) => t[0].toLowerCase() + t.slice(1);
-  const links = alerts.map((a, i) => `<button type="button" class="alert-link" data-alert="${i}">${
-    esc(alerts.length === 1 ? a.detail : `${a.title}: ${lower(a.detail)}`)}</button>`).join("");
-  const title = alerts.length === 1 ? alerts[0].title : `${alerts.length} things to check`;
-  renderVerdict(title, links, alerts.map((a) => a.title + a.detail).join("|"), alerts);
+  // Remember the alert in progress and its peak, for the "back to normal" line.
+  const first = alerts[0];
+  if (!state.incident) state.incident = { label: first.label ?? first.title, peak: first.value ?? null, kind: first.kind, start: Date.now() };
+  else if (first.value != null && (state.incident.peak == null || first.value > state.incident.peak)) state.incident.peak = first.value;
+
+  // One alert: its explanation and two actions, each doing what it says. Several: one link per alert.
+  const links = alerts.length === 1
+    ? `<span>${esc(first.detail)}</span><span class="alert-actions"><button type="button" class="alert-link" data-alert="0">Show ${esc(first.label ?? "the part")}</button>${
+      first.kind === "temp" ? `<button type="button" class="alert-link" data-limits>Change the limit</button>` : ""}</span>`
+    : alerts.map((a, i) => `<button type="button" class="alert-link" data-alert="${i}">${esc(a.title)}</button>`).join("");
+  const title = alerts.length === 1 ? first.title : `${alerts.length} things to check`;
+  renderVerdict(title, links, alerts.map((a) => a.title + a.detail).join("|"), alerts, first.sev === 2 ? "crit" : "warn", codeFor(m, first));
+}
+
+const RECOVERED_FOR = 10 * 60 * 1000;
+
+// Two characters on the debug display, naming the part to check, as a board's code names a stage.
+function codeFor(m, a) {
+  if (a.code) return a.code;
+  if (m.cpu?.name === a.target) return "CP";
+  if (m.gpus.some((g) => g.name === a.target)) return "GP";
+  const dimm = m.dimms.find((g) => g.name === a.target);
+  if (dimm) return `D${dimm.name.match(/#(\d+)/)?.[1] ?? ""}`.slice(0, 2);
+  const drive = m.drives.find((d) => d.group.name === a.target);
+  if (drive) return drive.kind === "nvme" ? "M2" : "SA";
+  return "SB";
 }
 
 // ---- Detail panel -----------------------------------------------------------------
@@ -917,7 +1105,7 @@ function select(name, chartId) {
   updateRail();
   // On narrow screens the detail sits under the board: bring it into view.
   if (matchMedia("(max-width: 1240px)").matches) {
-    document.querySelector(".rail").scrollIntoView({ behavior: REDUCED_MOTION ? "auto" : "smooth" });
+    document.querySelector(".rail").scrollIntoView({ behavior: motionOn() ? "smooth" : "auto" });
   }
 }
 
@@ -995,7 +1183,7 @@ function updateRail() {
   setText($("scopeValue"), formatValue(chart.type, chart.value, chart.name));
   const long = settings.chart > 60 && state.longHistory?.id === chart.id ? state.longHistory.values : null;
   const h = long ?? chart.history ?? [];
-  setText($("scopeSpan"), { 60: "Last minute", 300: "Last 5 minutes", 900: "Last 15 minutes" }[settings.chart]);
+  for (const b of document.querySelectorAll(".span-pick button")) b.setAttribute("aria-pressed", String(+b.dataset.span === settings.chart));
   if (h.length) {
     setText($("scopeRange"), `min ${formatValue(chart.type, Math.min(...h), chart.name)}, max ${formatValue(chart.type, Math.max(...h), chart.name)}`);
   }
@@ -1023,7 +1211,8 @@ function hideTarget() {
 // ---- Chart: a stepped trace, like a signal on a copper track ----------------------
 function drawScope(history, slots) {
   const canvas = $("scope");
-  const dpr = devicePixelRatio || 1;
+  const dpr = (devicePixelRatio || 1) * (canvas.getBoundingClientRect().width / canvas.clientWidth || 1);
+  const css = getComputedStyle(canvas);
   const w = canvas.clientWidth, h = canvas.clientHeight;
   if (!w || !h) return;
   if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
@@ -1034,7 +1223,7 @@ function drawScope(history, slots) {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
 
-  ctx.strokeStyle = "#26695a";
+  ctx.strokeStyle = css.getPropertyValue("--trace").trim();
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let i = 0; i <= 3; i++) {
@@ -1054,7 +1243,7 @@ function drawScope(history, slots) {
   const x = (i) => w - ((history.length - 1 - i) / (slots - 1)) * w;
   const y = (v) => 4 + (1 - (v - lo) / (hi - lo)) * (h - 8);
 
-  ctx.strokeStyle = "#d8b45a";
+  ctx.strokeStyle = css.getPropertyValue("--silk").trim();   // gold is only for load
   ctx.lineWidth = 2;
   ctx.lineJoin = "miter";
   ctx.beginPath();
@@ -1210,6 +1399,35 @@ $("list").addEventListener("keydown", (e) => {
   if (e.key === "Enter" || e.key === " ") { e.preventDefault(); chooseRow(e.target.closest("tr[data-id]")); }
 });
 
+// ---- Appearance ----------------------------------------------------------------------------
+const LOOK_SWITCHES = ["cb", "contrast", "compact", "deco", "anim"];
+const ZOOM = { small: 0.85, normal: 1, large: 1.2 };
+
+// Animations follow the setting and the system's "reduce motion"; the fans have their own setting.
+function motionOn() { return settings.anim && !REDUCED_MOTION; }
+
+function applyLook() {
+  const body = document.body;
+  body.dataset.theme = settings.theme;
+  body.classList.toggle("cb", settings.cb);
+  body.classList.toggle("hc", settings.contrast);
+  body.classList.toggle("compact", settings.compact);
+  body.classList.toggle("no-deco", !settings.deco);
+  document.documentElement.style.zoom = settings.size === "normal" ? "" : String(ZOOM[settings.size]);
+  // Redrawn after the new layout: traces, heat colours, the chart.
+  requestAnimationFrame(() => {
+    drawTraces();
+    if (state.model) { state.verdictKey = ""; updateBoard(state.model); updateRail(); }
+  });
+}
+
+
+// ---- Small window: the app closes this one and opens the small one ----------------------
+$("miniButton").hidden = !window.chrome?.webview;
+$("miniButton").addEventListener("click", () => {
+  try { window.chrome.webview.postMessage({ type: "mini" }); } catch { /* not in the app window */ }
+});
+
 // ---- CSV export: the app saves the file (the window itself can't download) --------------
 $("exportNote").hidden = !window.chrome?.webview;
 $("exportCsv").addEventListener("click", () => {
@@ -1251,6 +1469,14 @@ $("sensors").addEventListener("click", (e) => {
   if (!row) return;
   state.chartId = row.dataset.id;
   updateBoard(state.model);
+  updateRail();
+});
+
+document.querySelector(".span-pick").addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-span]");
+  if (!b) return;
+  settings.chart = [300, 900].includes(+b.dataset.span) ? +b.dataset.span : 60;
+  saveSettings();
   updateRail();
 });
 
@@ -1320,6 +1546,14 @@ function applyRail() {
 }
 
 $("railToggle").addEventListener("click", () => setRail(!settings.rail));
+$("railClose").addEventListener("click", () => { setRail(false); $("railToggle").focus(); });
+
+// At middle widths the panel is a drawer over the board: it starts below the header, so the
+// header's buttons stay in reach, and Escape closes it.
+const drawer = matchMedia("(min-width: 761px) and (max-width: 1240px)");
+new ResizeObserver(() => {
+  document.body.style.setProperty("--top-h", `${Math.ceil(document.querySelector(".top").getBoundingClientRect().height)}px`);
+}).observe(document.querySelector(".top"));
 
 // ---- Settings panel ---------------------------------------------------------------
 const settingsPanel = $("settings");
@@ -1342,17 +1576,44 @@ function renderLimits() {
 function syncSettingsForm() {
   for (const input of settingsPanel.querySelectorAll("input[type=radio]")) input.checked = String(settings[input.name]) === input.value;
   for (const input of settingsPanel.querySelectorAll("input[name=alert]")) input.checked = settings.alerts[input.value];
+  for (const input of settingsPanel.querySelectorAll("input[name=look]")) input.checked = settings[input.value];
   renderLimits();
 }
 
-function openSettings(open) {
+function showTab(id) {
+  for (const t of settingsPanel.querySelectorAll("[role=tab]")) {
+    const on = t.dataset.tab === id;
+    t.setAttribute("aria-selected", String(on));
+    t.tabIndex = on ? 0 : -1;
+  }
+  for (const p of settingsPanel.querySelectorAll("[role=tabpanel]")) p.hidden = p.id !== `tab-${id}`;
+}
+
+function openSettings(open, tab) {
   settingsPanel.hidden = !open;
   $("settingsToggle").setAttribute("aria-expanded", String(open));
   if (open) {
+    if (tab) showTab(tab);
     syncSettingsForm();
-    settingsPanel.querySelector("input:checked")?.focus();
+    settingsPanel.querySelector("[role=tab][aria-selected=true]")?.focus();
   }
 }
+
+settingsPanel.querySelector("[role=tablist]").addEventListener("click", (e) => {
+  const t = e.target.closest("[role=tab]");
+  if (t) showTab(t.dataset.tab);
+});
+settingsPanel.querySelector("[role=tablist]").addEventListener("keydown", (e) => {
+  if (!["ArrowRight", "ArrowLeft", "Home", "End"].includes(e.key)) return;
+  e.preventDefault();
+  const tabs = [...settingsPanel.querySelectorAll("[role=tab]")];
+  const i = tabs.findIndex((t) => t.getAttribute("aria-selected") === "true");
+  const next = e.key === "Home" ? tabs[0] : e.key === "End" ? tabs[tabs.length - 1]
+    : tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+  showTab(next.dataset.tab);
+  next.focus();
+});
+$("settingsClose").addEventListener("click", () => { openSettings(false); $("settingsToggle").focus(); });
 
 function setLimit(key) {
   const inputs = [...settingsPanel.querySelectorAll(`[data-limit="${key}"]`)];
@@ -1393,17 +1654,26 @@ settingsPanel.addEventListener("change", (e) => {
   else if (name === "rate") settings.rate = value === "2" ? 2 : 1;
   else if (name === "fans") settings.fans = value === "still" ? "still" : "spin";
   else if (name === "chart") settings.chart = [300, 900].includes(+value) ? +value : 60;
+  else if (name === "theme") settings.theme = ["black", "blue", "white"].includes(value) ? value : "green";
+  else if (name === "size") settings.size = ["small", "large"].includes(value) ? value : "normal";
+  else if (name === "look" && LOOK_SWITCHES.includes(value)) settings[value] = checked;
   else if (name === "alert" && value in settings.alerts && value !== "limits") settings.alerts[value] = checked;
   else if (e.target.dataset.limit) { if (!setLimit(e.target.dataset.limit)) return; }
   else return;
   saveSettings();
+  // Applied here, after the choice is stored: a separate listener can run before this one.
+  if (["theme", "size", "look"].includes(name)) applyLook();
   refreshView();
 });
 
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !settingsPanel.hidden) {
+  if (e.key !== "Escape") return;
+  if (!settingsPanel.hidden) {
     openSettings(false);
     $("settingsToggle").focus();
+  } else if (settings.rail && drawer.matches) {
+    setRail(false);
+    $("railToggle").focus();
   }
 });
 
@@ -1413,6 +1683,7 @@ document.addEventListener("pointerdown", (e) => {
 
 applyRail();
 applyView();
+applyLook();
 mirrorToApp();
 
 poll();
