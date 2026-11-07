@@ -33,11 +33,31 @@
         <label><input type="radio" name="rate" value="2" /> Twice a second <small>uses about twice as much CPU</small></label>
       </fieldset>
       <fieldset>
+        <legend>Chart</legend>
+        <label><input type="radio" name="chart" value="60" /> Last minute</label>
+        <label><input type="radio" name="chart" value="300" /> Last 5 minutes</label>
+        <label><input type="radio" name="chart" value="900" /> Last 15 minutes</label>
+      </fieldset>
+      <fieldset>
         <legend>Fan icons</legend>
         <label><input type="radio" name="fans" value="spin" /> Spin faster or slower with the fan</label>
         <label><input type="radio" name="fans" value="still" /> Stay still <small>uses the least CPU</small></label>
       </fieldset>
-      <p class="settings-note">Settings are kept for your Windows account.</p>
+      <fieldset>
+        <legend>Alerts</legend>
+        <label><input type="checkbox" name="alert" value="temps" /> High temperatures</label>
+        <table class="limits">
+          <thead><tr><th scope="col">Limits</th><th scope="col">Warning</th><th scope="col">Critical</th></tr></thead>
+          <tbody id="limitRows"></tbody>
+        </table>
+        <p class="settings-error" id="limitError" role="alert" hidden></p>
+        <label><input type="checkbox" name="alert" value="fans" /> A fan that stops</label>
+        <label><input type="checkbox" name="alert" value="space" /> Windows drive almost full</label>
+        <label><input type="checkbox" name="alert" value="wear" /> SSD near the end of its life</label>
+        <button type="button" class="link" id="resetAlerts">Restore the default alerts</button>
+      </fieldset>
+      <p class="settings-note" id="hiddenNote" hidden><span id="hiddenCount"></span> <button type="button" class="link unhide">Show them again</button></p>
+      <p class="settings-note">Settings are kept for your Windows account. Names and hidden parts are set in the detail panel.</p>
     </section>
   </header>
 
@@ -48,17 +68,22 @@
         <span class="key-item"><i class="key-gold"></i>Gold: how busy it is</span>
         <span class="key-item"><i class="key-heat"></i>Colour: how close it is to its limit</span>
         <span class="key-item" id="keyHidden"></span>
+        <span class="key-item" id="keyParts" hidden><span id="keyPartsText"></span> <button type="button" class="link unhide">Show them again</button></span>
       </div>
     </section>
 
     <aside class="rail" id="rail" aria-label="Detail of the selected part">
       <h2 id="railTitle"></h2>
       <p class="rail-sub" id="railSub"></p>
+      <div class="rail-actions">
+        <button type="button" class="link" id="renameToggle" aria-pressed="false">Rename sensors</button>
+        <button type="button" class="link" id="hidePart"></button>
+      </div>
       <div class="scope">
         <p class="scope-name" id="scopeName"></p>
         <p class="scope-value" id="scopeValue"></p>
-        <canvas id="scope" height="130" role="img" aria-label="The selected sensor over the last 60 seconds"></canvas>
-        <p class="scope-foot"><span>Last 60 seconds</span><span id="scopeRange"></span></p>
+        <canvas id="scope" height="130" role="img" aria-label="Chart of the selected sensor"></canvas>
+        <p class="scope-foot"><span id="scopeSpan">Last minute</span><span id="scopeRange"></span></p>
       </div>
       <div class="sensors" id="sensors"></div>
       <button type="button" class="more" id="more" hidden></button>

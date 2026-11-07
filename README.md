@@ -44,8 +44,14 @@ part where it sits on the board and answers the question you opened it for:
 - Drives: temperature, used space and SSD remaining life
 - Battery charge and charging state on laptops
 - Alerts for high temperatures, stopped fans, worn SSDs and a nearly full Windows drive
-- Settings: °C or °F, values updated once or twice a second, fan icons spinning at their fan's
-  pace or still, and a detail panel you can hide. The window reopens where you left it
+- Settings: °C or °F, values updated once or twice a second, charts of the last 1, 5 or 15
+  minutes, fan icons spinning at their fan's pace or still, and a detail panel you can hide.
+  The window reopens where you left it
+- Your own names for fans and probes ("Front intake", "VRM"), and parts you don't care about
+  hidden from the board
+- Alert limits you can change, and each kind of alert can be turned off
+- Optional: the CPU temperature on the icon next to the clock, and Windows notifications when
+  something needs attention, also with the window closed
 - Own window and an icon next to the clock. It starts with Windows and opens without UAC prompts
 - No network access: the page is served only on `127.0.0.1`
 
@@ -129,6 +135,12 @@ with how WyreMonitor shows them belong in this repository's [issues](../../issue
 
 **Can I show temperatures in Fahrenheit?**
 Yes: open **Settings** at the top right and choose Fahrenheit.
+
+**How do I get notifications, or the temperature next to the clock?**
+Right-click the WyreMonitor icon next to the clock and tick *Show the CPU temperature on this
+icon* or *Notify me when something needs attention*. They use the limits and names you set in
+the window. With either one on, the service keeps reading the sensors every 5 seconds with the
+window closed: about 1 % of one core.
 
 **How much CPU does it use?**
 Measured on a Threadripper 3960X with the window open: about 10 % of one core with the default

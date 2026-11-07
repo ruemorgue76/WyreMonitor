@@ -41,6 +41,9 @@ internal static class ServiceLink
         }
     }
 
+    /// <summary>A request to the service, at an address returned by <see cref="FindUrlAsync"/>.</summary>
+    public static Task<string> GetStringAsync(string url) => Http.GetStringAsync(url);
+
     /// <summary>The process id of the running WyreMonitor service, from the service manager.</summary>
     private static int? ServiceProcessId()
     {

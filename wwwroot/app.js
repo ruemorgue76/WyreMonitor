@@ -10,7 +10,10 @@ const LOCALE = undefined;   // numbers and times follow the Windows regional set
 // Kept in the window's browser profile, which belongs to the Windows account. Every value is
 // checked against the few allowed ones, so a damaged entry falls back to the default.
 const SETTINGS_KEY = "wyremonitor.settings";
-const settings = loadSettings();
+const MAX_NAME = 40;
+const MAX_ENTRIES = 300;
+const LIMIT_KEYS = ["cpu", "gpu", "gpuHot", "dimm"];
+const settings = loadSettings();   // after the constants it uses
 
 function loadSettings() {
   let saved = {};
@@ -20,11 +23,56 @@ function loadSettings() {
     rate: saved.rate === 2 ? 2 : 1,             // readings per second
     fans: saved.fans === "still" ? "still" : "spin",
     rail: saved.rail !== false,                 // detail panel shown
+    chart: [300, 900].includes(saved.chart) ? saved.chart : 60,   // seconds shown in the chart
+    names: cleanNames(saved.names),             // sensor id -> name chosen by the user
+    hidden: cleanHidden(saved.hidden),          // part names and fan sensor ids left off the board
+    alerts: cleanAlerts(saved.alerts),
   };
+}
+
+function cleanNames(value) {
+  // No prototype: a sensor id can never collide with a built-in property.
+  const names = Object.create(null);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [id, name] of Object.entries(value).slice(0, MAX_ENTRIES)) {
+      if (typeof name === "string" && name.trim() && id.length <= 256) names[id] = name.trim().slice(0, MAX_NAME);
+    }
+  }
+  return names;
+}
+
+function cleanHidden(value) {
+  if (!Array.isArray(value)) return [];
+  return [...new Set(value.filter((k) => typeof k === "string" && k.length > 0 && k.length <= 256))].slice(0, MAX_ENTRIES);
+}
+
+function validLimit(l) {
+  return !!l && Number.isFinite(l.warn) && Number.isFinite(l.crit) && l.warn >= 20 && l.crit <= 150 && l.warn < l.crit;
+}
+
+function cleanAlerts(value) {
+  const a = value && typeof value === "object" ? value : {};
+  const limits = {};
+  for (const key of LIMIT_KEYS) {
+    const l = a.limits?.[key];
+    if (validLimit(l)) limits[key] = { warn: l.warn, crit: l.crit };
+  }
+  return { temps: a.temps !== false, fans: a.fans !== false, space: a.space !== false, wear: a.wear !== false, limits };
 }
 
 function saveSettings() {
   try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch { /* kept for this session only */ }
+  mirrorToApp();
+}
+
+// The icon next to the clock raises Windows notifications and shows the CPU temperature while
+// the window is closed: it gets a copy of what it needs. Only inside the WyreMonitor window.
+function mirrorToApp() {
+  try {
+    window.chrome?.webview?.postMessage({
+      type: "settings", unit: settings.unit, names: settings.names, hidden: settings.hidden, alerts: settings.alerts,
+    });
+  } catch { /* not in the app window */ }
 }
 
 // ---- Limits -------------------------------------------------------------------
@@ -160,9 +208,18 @@ function heat(temp, warn) {
 const find = (group, type, pattern) => group?.sensors.find((s) => s.type === type && pattern.test(s.name));
 const lastSegment = (name) => name.split(" › ").pop();
 
-function cpuLimits(cpu) {
-  return /intel/i.test(cpu?.name ?? "") ? LIMITS.cpuIntel : LIMITS.cpuAmd;
+// The user's limits when set (Settings > Alerts), otherwise the part's own.
+function defaultLimit(key, cpu) {
+  if (key === "cpu") return /intel/i.test(cpu?.name ?? "") ? LIMITS.cpuIntel : LIMITS.cpuAmd;
+  return LIMITS[key];
 }
+const limit = (key, cpu) => settings.alerts.limits[key] ?? defaultLimit(key, cpu);
+const cpuLimits = (cpu) => limit("cpu", cpu);
+
+// Names chosen by the user win over the library's.
+const displayName = (s) => settings.names[s.id] ?? sensorLabel(s.name);
+const fanName = (f) => settings.names[f.sensor.id] ?? `Fan ${f.label}`;
+const shown = (key) => !settings.hidden.includes(key);
 
 function shortCpuName(name) {
   return name.replace(/^AMD /, "").replace(/^Intel\(R\) Core\(TM\) /, "Core ").replace(/^Intel /, "")
@@ -268,7 +325,8 @@ function readModel(snapshot) {
     && h.sensors.some((s) => isRealTemp(s) || s.type === "Fan"));
   const battery = hw.find((h) => h.type === "Battery");
 
-  // Fans by controller: A = first chip, B = second, and so on.
+  // Fans by controller: A = first chip, B = second, and so on. Labels are given before parts
+  // are hidden, so a fan keeps its label whatever else is hidden.
   const fans = [];
   boards.forEach((g, c) => {
     g.sensors.filter((s) => s.type === "Fan").forEach((s, i) => {
@@ -276,7 +334,28 @@ function readModel(snapshot) {
     });
   });
 
-  return { snapshot, cpu, gpus, memory, dimms, boards, battery, fans, drives, hiddenReaders };
+  // Parts the user hid are left off the board and raise no alerts.
+  const ids = new Set(hw.flatMap((h) => [h.name, ...h.sensors.map((x) => x.id)]));
+  const show = (g) => (g && shown(g.name) ? g : undefined);
+  return {
+    snapshot,
+    cpu: show(cpu),
+    gpus: gpus.filter(show),
+    memory: show(memory),
+    dimms: dimms.filter(show),
+    boards: boards.filter(show),
+    battery: show(battery),
+    fans: fans.filter((f) => shown(f.sensor.id)),
+    drives: drives.filter((d) => shown(d.group.name)),
+    hiddenReaders,
+    hiddenParts: settings.hidden.filter((k) => ids.has(k)).length,
+  };
+}
+
+// Whether a hardware group can be chosen on the board as it is drawn now.
+function onBoard(m, name) {
+  return [m.cpu, m.memory, m.battery, ...m.gpus, ...m.dimms, ...m.boards, ...m.drives.map((d) => d.group)]
+    .some((g) => g?.name === name) || m.fans.some((f) => f.group.name === name);
 }
 
 // ---- State ------------------------------------------------------------------------
@@ -291,6 +370,8 @@ const state = {
   sensorRows: new Map(),
   verdictKey: "",
   tracesDrawn: false,
+  renaming: false,     // the detail panel shows name fields instead of readings
+  longHistory: null,   // { id, values }: the charted sensor over more than a minute
 };
 
 const $ = (id) => document.getElementById(id);
@@ -453,7 +534,7 @@ function buildBoard(m) {
     <p class="brand">${esc(motherboard?.name ?? m.snapshot.machineName ?? "This PC")}</p>
     ${m.fans.length ? `<div class="fans">${m.fans.map((f) => `
       <button type="button" class="part fan" data-sel="${esc(f.group.name)}" data-chart="${esc(f.sensor.id)}" data-fan="${esc(f.sensor.id)}" title="${esc(lastSegment(f.group.name))}, ${esc(f.sensor.name)}">
-        ${ROTOR}<span><span class="designator">Fan ${esc(f.label)}</span><span class="val"></span></span>
+        ${ROTOR}<span><span class="designator" title="Fan ${esc(f.label)}">${esc(fanName(f))}</span><span class="val"></span></span>
       </button>`).join("")}</div>` : ""}
     ${m.dimms.length ? `<div class="dimms l">${m.dimms.slice(0, half).map(buildDimm).join("")}</div>` : ""}
     ${buildCpu(m)}
@@ -589,7 +670,7 @@ function updateBoard(m) {
     if (!el) continue;
     const r = gpuReadings(g);
     const q = (key) => el.querySelector(`[data-gpu="${key}"]`);
-    valueHtml(q("temp"), r.temp == null ? null : fixed(toUnit(r.temp)), degrees(), r.temp == null ? null : heat(r.temp, LIMITS.gpu.warn));
+    valueHtml(q("temp"), r.temp == null ? null : fixed(toUnit(r.temp)), degrees(), r.temp == null ? null : heat(r.temp, limit("gpu").warn));
     setText(q("load"), r.load == null ? "n/a" : `${fixed(r.load)} %`);
     bar(el.querySelector('[data-gpubar="load"]'), (r.load ?? 0) / 100);
     setText(q("vram"), r.vramUsed == null ? "n/a"
@@ -598,7 +679,7 @@ function updateBoard(m) {
     setText(q("power"), r.power == null ? "n/a" : `${fixed(r.power)} W`);
     const hotEl = q("hot");
     setText(hotEl, r.hot == null ? "n/a" : temp(r.hot));
-    if (hotEl && r.hot != null) hotEl.style.color = heat(r.hot, LIMITS.gpuHot.warn);
+    if (hotEl && r.hot != null) hotEl.style.color = heat(r.hot, limit("gpuHot").warn);
     for (const f of r.fans) setFanIcon(el.querySelector(`[data-gpufan="${CSS.escape(f.id)}"]`), f.value);
   }
 
@@ -616,7 +697,7 @@ function updateBoard(m) {
     if (!label) continue;
     if (t) {
       setText(label, temp(t.value));
-      label.style.color = heat(t.value, LIMITS.dimm.warn);
+      label.style.color = heat(t.value, limit("dimm").warn);
     } else {
       const capacity = find(g, "Data", /^Capacity$/);
       setText(label, capacity ? formatBytes(capacity.value) : "");
@@ -659,7 +740,7 @@ function updateBoard(m) {
     temps.forEach((t, i) => {
       setText(probes.children[i], `${fixed(toUnit(t.value))}°`);
       probes.children[i].style.color = heat(t.value, LIMITS.board.warn);
-      probes.children[i].title = sensorLabel(t.name);
+      probes.children[i].title = displayName(t);
     });
   }
 
@@ -689,6 +770,11 @@ function updateBoard(m) {
   }
 
   setText($("keyHidden"), m.hiddenReaders ? `${m.hiddenReaders} empty card ${m.hiddenReaders === 1 ? "reader" : "readers"} hidden` : "");
+  const parts = m.hiddenParts ? `${m.hiddenParts} ${m.hiddenParts === 1 ? "part" : "parts"} hidden by you.` : "";
+  $("keyParts").hidden = !parts;
+  setText($("keyPartsText"), parts);
+  $("hiddenNote").hidden = !parts;
+  setText($("hiddenCount"), parts);
 }
 
 // ---- Verdict ----------------------------------------------------------------------
@@ -697,8 +783,9 @@ function collectAlerts(m) {
   const add = (sev, title, detail, target) => alerts.push({ sev, title, detail, target });
   const s = m.snapshot.summary;
 
+  const on = settings.alerts;
   const checkTemp = (value, limit, label, target) => {
-    if (value == null) return;
+    if (value == null || !on.temps) return;
     if (value >= limit.crit) add(2, `${label} at ${temp(value)}`, `Above the critical limit of ${temp(limit.crit)}.`, target);
     else if (value >= limit.warn) add(1, `${label} at ${temp(value)}`, `Above the warning threshold of ${temp(limit.warn)}.`, target);
   };
@@ -707,33 +794,33 @@ function collectAlerts(m) {
   for (const g of m.gpus) {
     const r = gpuReadings(g);
     const name = m.gpus.length > 1 ? shortGpuName(g.name) : "GPU";
-    checkTemp(r.temp, LIMITS.gpu, name, g.name);
-    checkTemp(r.hot, LIMITS.gpuHot, `${name} hot spot`, g.name);
+    checkTemp(r.temp, limit("gpu"), name, g.name);
+    checkTemp(r.hot, limit("gpuHot"), `${name} hot spot`, g.name);
   }
   for (const g of m.dimms) {
     const t = g.sensors.find((x) => isRealTemp(x) && /^DIMM/.test(x.name));
-    checkTemp(t?.value, LIMITS.dimm, `Memory module ${g.name.match(/#\d+/)?.[0] ?? ""}`, g.name);
+    checkTemp(t?.value, limit("dimm"), `Memory module ${g.name.match(/#\d+/)?.[0] ?? ""}`, g.name);
   }
   for (const d of m.drives) {
     checkTemp(d.temp?.value, d.limit, `Drive ${d.short}`, d.group.name);
-    if (d.isSystem && d.free && d.total.value) {
+    if (on.space && d.isSystem && d.free && d.total.value) {
       const ratio = d.free.value / d.total.value;
       if (ratio < FREE_WARN) {
         add(ratio < FREE_CRIT ? 2 : 1, "Windows drive almost full",
           `${formatBytes(d.free.value)} free of ${formatBytes(d.total.value)}.`, d.group.name);
       }
     }
-    if (d.life && d.life.value <= LIFE_WARN) {
+    if (on.wear && d.life && d.life.value <= LIFE_WARN) {
       add(d.life.value <= LIFE_CRIT ? 2 : 1, `SSD ${d.short} near end of life`,
         `Remaining life ${fixed(d.life.value)} %.`, d.group.name);
     }
   }
   // A fan that was spinning and stopped. Graphics card fans are left out: they stop on purpose.
-  for (const f of m.fans) {
+  for (const f of on.fans ? m.fans : []) {
     const h = f.sensor.history ?? [];
     const recent = h.slice(-5);
     if (recent.length === 5 && recent.every((v) => v === 0) && h.some((v) => v > 200)) {
-      add(2, `Fan ${f.label} stopped`, "It was spinning a moment ago.", f.group.name);
+      add(2, `${fanName(f)} stopped`, "It was spinning a moment ago.", f.group.name);
     }
   }
   return alerts.sort((a, b) => b.sev - a.sev);
@@ -845,6 +932,11 @@ function renderRail() {
 
   setText($("railTitle"), groupTitle(g));
   setText($("railSub"), groupSubtitle(g, m));
+  const target = hideTarget();
+  $("hidePart").hidden = !target;
+  if (target) setText($("hidePart"), `Hide ${target.label} from the board`);
+  setText($("renameToggle"), state.renaming ? "Done renaming" : "Rename sensors");
+  $("renameToggle").setAttribute("aria-pressed", String(state.renaming));
 
   const visible = g.sensors.filter((s) => state.showSecondary || !isSecondary(s));
   const hiddenCount = g.sensors.length - visible.length;
@@ -857,17 +949,22 @@ function renderRail() {
   const rank = (t) => { const i = TYPE_ORDER.indexOf(t); return i < 0 ? 99 : i; };
   const types = [...byType.keys()].sort((a, b) => rank(a) - rank(b));
 
+  // Renaming: each sensor becomes a text field; left empty, it goes back to its own name.
+  const row = (s) => state.renaming
+    ? `<label class="sensor renaming"><span class="visually-hidden">Name for ${esc(sensorLabel(s.name))}</span>
+        <input type="text" data-rename="${esc(s.id)}" maxlength="${MAX_NAME}" value="${esc(settings.names[s.id] ?? "")}"
+          placeholder="${esc(defaultName(s))}" /></label>`
+    : `<button type="button" class="sensor" data-id="${esc(s.id)}" aria-pressed="false">
+          <span class="sensor-name" title="${esc(s.name)}">${esc(shownName(s))}</span>
+          <span class="sensor-val"></span>
+        </button>`;
   $("sensors").innerHTML = types.map((t) => `
     <section class="sensor-group">
       <h3>${esc(TYPE_TITLES[t] ?? t)}</h3>
-      ${byType.get(t).map((s) => `
-        <button type="button" class="sensor" data-id="${esc(s.id)}" aria-pressed="false">
-          <span class="sensor-name" title="${esc(s.name)}">${esc(sensorLabel(s.name))}</span>
-          <span class="sensor-val"></span>
-        </button>`).join("")}
+      ${byType.get(t).map(row).join("")}
     </section>`).join("");
 
-  for (const el of $("sensors").querySelectorAll(".sensor")) {
+  for (const el of $("sensors").querySelectorAll(".sensor[data-id]")) {
     state.sensorRows.set(el.dataset.id, { el, val: el.querySelector(".sensor-val") });
   }
 
@@ -891,17 +988,37 @@ function updateRail() {
 
   const chart = byId.get(state.chartId);
   if (!chart) return;
-  setText($("scopeName"), sensorLabel(chart.name));
+  setText($("scopeName"), shownName(chart));
   setText($("scopeValue"), formatValue(chart.type, chart.value, chart.name));
-  const h = chart.history ?? [];
+  const long = settings.chart > 60 && state.longHistory?.id === chart.id ? state.longHistory.values : null;
+  const h = long ?? chart.history ?? [];
+  setText($("scopeSpan"), { 60: "Last minute", 300: "Last 5 minutes", 900: "Last 15 minutes" }[settings.chart]);
   if (h.length) {
     setText($("scopeRange"), `min ${formatValue(chart.type, Math.min(...h), chart.name)}, max ${formatValue(chart.type, Math.max(...h), chart.name)}`);
   }
-  drawScope(h);
+  drawScope(h, settings.chart);
+}
+
+// A board fan is named as on its tile ("Fan A1", or the user's name); other sensors by their
+// user's name or their own.
+function boardFan(sensor) { return state.model.fans.find((f) => f.sensor.id === sensor.id); }
+function defaultName(sensor) { const f = boardFan(sensor); return f ? `Fan ${f.label}` : sensorLabel(sensor.name); }
+function shownName(sensor) { const f = boardFan(sensor); return f ? fanName(f) : displayName(sensor); }
+
+// What "Hide from the board" hides: the fan shown in the chart when it came from a fan tile,
+// otherwise the selected part. A controller reached only through its fans has no tile to hide.
+function hideTarget() {
+  const m = state.model;
+  const fan = m.fans.find((f) => f.sensor.id === state.chartId && f.group.name === state.selected);
+  if (fan) return { key: fan.sensor.id, label: fanName(fan) };
+  const g = m.snapshot.hardware.find((h) => h.name === state.selected);
+  const hasTile = g && [m.cpu, m.memory, m.battery, ...m.gpus, ...m.dimms, ...m.drives.map((d) => d.group)]
+    .concat(m.boards.filter((b) => b.sensors.some(isRealTemp))).includes(g);
+  return hasTile ? { key: g.name, label: groupTitle(g) } : null;
 }
 
 // ---- Chart: a stepped trace, like a signal on a copper track ----------------------
-function drawScope(history) {
+function drawScope(history, slots) {
   const canvas = $("scope");
   const dpr = devicePixelRatio || 1;
   const w = canvas.clientWidth, h = canvas.clientHeight;
@@ -931,8 +1048,7 @@ function drawScope(history) {
   const pad = (hi - lo) * 0.1;
   lo -= pad; hi += pad;
 
-  const SLOTS = 60;
-  const x = (i) => w - ((history.length - 1 - i) / (SLOTS - 1)) * w;
+  const x = (i) => w - ((history.length - 1 - i) / (slots - 1)) * w;
   const y = (v) => 4 + (1 - (v - lo) / (hi - lo)) * (h - 8);
 
   ctx.strokeStyle = "#d8b45a";
@@ -969,13 +1085,16 @@ async function poll() {
       state.signature = sig;
       buildBoard(m);
     }
-    // First data, or the selected part disappeared: show the CPU, or the first part found.
-    if (!snapshot.hardware.some((h) => h.name === state.selected)) {
-      const first = m.cpu ?? snapshot.hardware[0];
-      state.selected = first?.name ?? null;
-      state.chartId = first ? defaultChart(first) : null;
-      state.showSecondary = false;
-      renderRail();
+    // First data, or the selected part disappeared or was hidden: show the CPU, or the first part.
+    if (!onBoard(m, state.selected)) selectFirst(m);
+
+    // More than a minute in the chart: the service sends the charted sensor's long history.
+    if (settings.chart > 60 && state.chartId) {
+      const hr = await fetch(`/api/history?id=${encodeURIComponent(state.chartId)}`, { cache: "no-store", signal: controller.signal });
+      if (hr.ok) {
+        const j = await hr.json();
+        if (Array.isArray(j.history)) state.longHistory = { id: j.id, values: j.history.filter(Number.isFinite) };
+      }
     }
 
     state.lastOk = Date.now();
@@ -999,6 +1118,28 @@ async function poll() {
   }
 }
 
+function selectFirst(m) {
+  const first = m.cpu ?? m.gpus[0] ?? m.memory ?? m.drives[0]?.group ?? m.dimms[0] ?? m.boards[0] ?? m.battery ?? null;
+  state.selected = first?.name ?? null;
+  state.chartId = first ? defaultChart(first) : null;
+  state.showSecondary = false;
+  renderRail();
+}
+
+// After a change to names or hidden parts: the board is drawn again from the last reading.
+function rebuild() {
+  saveSettings();
+  if (!state.model) return;
+  const m = readModel(state.model.snapshot);
+  state.model = m;
+  buildBoard(m);
+  if (!onBoard(m, state.selected)) selectFirst(m); else renderRail();
+  state.verdictKey = "";
+  updateBoard(m);
+  updateRail();
+  updateVerdict(m);
+}
+
 // ---- Interaction ------------------------------------------------------------------
 $("board").addEventListener("click", (e) => {
   const part = e.target.closest("[data-sel]");
@@ -1006,12 +1147,47 @@ $("board").addEventListener("click", (e) => {
 });
 
 $("sensors").addEventListener("click", (e) => {
-  const row = e.target.closest(".sensor");
+  const row = e.target.closest("button.sensor");
   if (!row) return;
   state.chartId = row.dataset.id;
   updateBoard(state.model);
   updateRail();
 });
+
+$("renameToggle").addEventListener("click", () => {
+  state.renaming = !state.renaming;
+  renderRail();
+  updateRail();
+  if (state.renaming) $("sensors").querySelector("input")?.focus();
+});
+
+$("sensors").addEventListener("change", (e) => {
+  const id = e.target.dataset?.rename;
+  if (id === undefined) return;
+  const name = e.target.value.trim().slice(0, MAX_NAME);
+  if (name && (id in settings.names || Object.keys(settings.names).length < MAX_ENTRIES)) settings.names[id] = name;
+  else delete settings.names[id];
+  rebuild();
+});
+
+$("sensors").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && e.target.dataset?.rename !== undefined) e.target.blur();
+});
+
+$("hidePart").addEventListener("click", () => {
+  const target = hideTarget();
+  if (!target || settings.hidden.length >= MAX_ENTRIES) return;
+  settings.hidden.push(target.key);
+  state.renaming = false;
+  rebuild();
+});
+
+for (const button of document.querySelectorAll(".unhide")) {
+  button.addEventListener("click", () => {
+    settings.hidden = [];
+    rebuild();
+  });
+}
 
 $("more").addEventListener("click", () => {
   state.showSecondary = !state.showSecondary;
@@ -1048,31 +1224,80 @@ $("railToggle").addEventListener("click", () => setRail(!settings.rail));
 // ---- Settings panel ---------------------------------------------------------------
 const settingsPanel = $("settings");
 
+const LIMIT_LABELS = { cpu: "CPU", gpu: "GPU", gpuHot: "GPU hot spot", dimm: "Memory modules" };
+
+// Limits are typed in the unit shown, and kept in °C.
+function renderLimits() {
+  const cpu = state.model?.cpu;
+  settingsPanel.querySelector(".limits thead th").textContent = `Limits, ${degrees()}`;
+  $("limitRows").innerHTML = LIMIT_KEYS.map((key) => {
+    const l = limit(key, cpu);
+    const cell = (level) => `<td><input type="number" step="1" data-limit="${key}" data-level="${level}"
+      value="${Math.round(toUnit(l[level]))}" aria-label="${LIMIT_LABELS[key]}, ${level === "warn" ? "warning" : "critical"}, ${degrees()}" /></td>`;
+    return `<tr><th scope="row">${LIMIT_LABELS[key]}</th>${cell("warn")}${cell("crit")}</tr>`;
+  }).join("");
+  $("limitError").hidden = true;
+}
+
+function syncSettingsForm() {
+  for (const input of settingsPanel.querySelectorAll("input[type=radio]")) input.checked = String(settings[input.name]) === input.value;
+  for (const input of settingsPanel.querySelectorAll("input[name=alert]")) input.checked = settings.alerts[input.value];
+  renderLimits();
+}
+
 function openSettings(open) {
   settingsPanel.hidden = !open;
   $("settingsToggle").setAttribute("aria-expanded", String(open));
   if (open) {
-    for (const input of settingsPanel.querySelectorAll("input")) input.checked = String(settings[input.name]) === input.value;
+    syncSettingsForm();
     settingsPanel.querySelector("input:checked")?.focus();
   }
+}
+
+function setLimit(key) {
+  const inputs = [...settingsPanel.querySelectorAll(`[data-limit="${key}"]`)];
+  const toC = (v) => (settings.unit === "F" ? (v - 32) * 5 / 9 : v);
+  const [warn, crit] = inputs.map((i) => Math.round(toC(parseFloat(i.value)) * 10) / 10);
+  const ok = validLimit({ warn, crit });
+  inputs.forEach((i) => i.setAttribute("aria-invalid", String(!ok)));
+  $("limitError").hidden = ok;
+  setText($("limitError"), `Warning must be lower than critical, between ${temp(20)} and ${temp(150)}.`);
+  if (!ok) return false;
+  const def = defaultLimit(key, state.model?.cpu);
+  if (Math.abs(warn - def.warn) < 0.5 && Math.abs(crit - def.crit) < 0.5) delete settings.alerts.limits[key];
+  else settings.alerts.limits[key] = { warn, crit };
+  return true;
+}
+
+$("resetAlerts").addEventListener("click", () => {
+  settings.alerts = cleanAlerts({});
+  saveSettings();
+  syncSettingsForm();
+  refreshView();
+});
+
+function refreshView() {
+  // Redraw now with the new units, limits and fan icons; a new pace applies from the next reading.
+  if (!state.model) return;
+  state.verdictKey = "";
+  updateBoard(state.model);
+  updateRail();
+  updateVerdict(state.model);
 }
 
 $("settingsToggle").addEventListener("click", () => openSettings(settingsPanel.hidden));
 
 settingsPanel.addEventListener("change", (e) => {
-  const { name, value } = e.target;
-  if (name === "unit") settings.unit = value === "F" ? "F" : "C";
+  const { name, value, checked } = e.target;
+  if (name === "unit") { settings.unit = value === "F" ? "F" : "C"; renderLimits(); }
   else if (name === "rate") settings.rate = value === "2" ? 2 : 1;
   else if (name === "fans") settings.fans = value === "still" ? "still" : "spin";
+  else if (name === "chart") settings.chart = [300, 900].includes(+value) ? +value : 60;
+  else if (name === "alert" && value in settings.alerts && value !== "limits") settings.alerts[value] = checked;
+  else if (e.target.dataset.limit) { if (!setLimit(e.target.dataset.limit)) return; }
   else return;
   saveSettings();
-  // Redraw now with the new units and fan icons; a new pace applies from the next reading.
-  if (state.model) {
-    state.verdictKey = "";
-    updateBoard(state.model);
-    updateRail();
-    updateVerdict(state.model);
-  }
+  refreshView();
 });
 
 document.addEventListener("keydown", (e) => {
@@ -1087,5 +1312,6 @@ document.addEventListener("pointerdown", (e) => {
 });
 
 applyRail();
+mirrorToApp();
 
 poll();

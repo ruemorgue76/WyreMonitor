@@ -18,7 +18,10 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     private readonly object _updateLock = new();
     private Timer? _timer;
 
-    // Rolling history per sensor id: one sample per second, the last 60 seconds (PushHistory).
+    // Rolling history per sensor id: one sample per second for the last 15 minutes (PushHistory).
+    // Each snapshot carries only the last minute; the longer chart asks for one sensor (History).
+    public const int HistorySeconds = 900;
+    private const int SnapshotHistorySeconds = 60;
     private readonly ConcurrentDictionary<string, RingBuffer> _history = new();
 
     private volatile Snapshot _latest = Snapshot.Empty;
@@ -39,8 +42,21 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     private DateTime _lastSample = DateTime.MinValue;
     private long _lastClientRequest;   // Environment.TickCount64 of the page's last request
     private long _lastFastRequest;     // ... of the last request asking for two readings a second
+    private long _lastBackgroundRequest;   // ... of the icon next to the clock (temperature, alerts)
+    private static readonly TimeSpan BackgroundTimeout = TimeSpan.FromSeconds(60);
 
     public Snapshot Latest => _latest;
+
+    /// <summary>The last 15 minutes of one sensor, one value per second; null for an unknown id.</summary>
+    public double[]? History(string id) => _history.TryGetValue(id, out var buffer) ? buffer.ToArray() : null;
+
+    /// <summary>
+    /// Called by the icon next to the clock, which checks every few seconds with no window open:
+    /// the sensors keep being read at the idle pace instead of stopping, never every second.
+    /// </summary>
+    public void NoteBackgroundActivity() => Interlocked.Exchange(ref _lastBackgroundRequest, Environment.TickCount64);
+
+    private bool BackgroundActive => Within(ref _lastBackgroundRequest, BackgroundTimeout);
 
     /// <summary>
     /// Called on every page request: while a page is open, sensors are read every second, or
@@ -119,7 +135,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
             return;
         }
         var sinceClient = TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastClientRequest));
-        if (sinceClient > IdleStop) return;
+        if (sinceClient > IdleStop && !BackgroundActive) return;
         if (sincePoll >= IdleInterval - Tolerance) Poll(fast: false);
     }
 
@@ -228,9 +244,9 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
 
     private double[] PushHistory(string id, double value, int samples)
     {
-        var buffer = _history.GetOrAdd(id, _ => new RingBuffer(60));
+        var buffer = _history.GetOrAdd(id, _ => new RingBuffer(HistorySeconds));
         for (var i = 0; i < samples; i++) buffer.Add(value);
-        return buffer.ToArray();
+        return buffer.Last(SnapshotHistorySeconds);
     }
 
     private static Summary BuildSummary(IReadOnlyList<HardwareGroup> groups)

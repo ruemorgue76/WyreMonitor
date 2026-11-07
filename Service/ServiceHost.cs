@@ -86,8 +86,29 @@ internal static class ServiceHost
         // the service a page is open, so it reads sensors at that pace instead of rarely.
         app.MapGet("/api/sensors", (HttpRequest request, HardwareMonitorService svc) =>
         {
+            if (request.Query["background"] == "1")
+            {
+                // The icon next to the clock: it keeps the sensors read at the idle pace and
+                // needs no history, which is most of the response.
+                svc.NoteBackgroundActivity();
+                var latest = svc.Latest;
+                return Results.Json(latest with
+                {
+                    Hardware = latest.Hardware
+                        .Select(g => g with { Sensors = g.Sensors.Select(s => s with { History = [] }).ToList() })
+                        .ToList(),
+                }, jsonOptions);
+            }
             svc.NoteClientActivity(fast: request.Query["fast"] == "1");
             return Results.Json(svc.Latest, jsonOptions);
+        });
+
+        // The last 15 minutes of one sensor, for the chart when it shows more than a minute.
+        app.MapGet("/api/history", (HttpRequest request, HardwareMonitorService svc) =>
+        {
+            var id = request.Query["id"].ToString();
+            var history = id.Length is > 0 and <= 256 ? svc.History(id) : null;
+            return history is null ? Results.NotFound() : Results.Json(new { id, history }, jsonOptions);
         });
 
         // Liveness probe. "app" lets the desktop app tell this service from another program.

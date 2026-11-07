@@ -35,6 +35,7 @@ internal static class DesktopApp
             return 0;
         }
 
+        Toasts.Register();
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);

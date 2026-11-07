@@ -63,7 +63,8 @@ Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\THIRD-PARTY-NOTICES.md"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\WyreMonitor"; Filename: "{app}\WyreMonitor.exe"
+; The ID lets the app show Windows notifications under its own name (see Desktop/Toasts.cs).
+Name: "{group}\WyreMonitor"; Filename: "{app}\WyreMonitor.exe"; AppUserModelID: "WyreMonitor.App"
 Name: "{autodesktop}\WyreMonitor"; Filename: "{app}\WyreMonitor.exe"; Tasks: desktopicon
 
 [Registry]

@@ -60,11 +60,15 @@ public sealed class RingBuffer
         if (_count < _buffer.Length) _count++;
     }
 
-    public double[] ToArray()
+    public double[] ToArray() => Last(_count);
+
+    /// <summary>The most recent <paramref name="n"/> values, oldest first.</summary>
+    public double[] Last(int n)
     {
-        var result = new double[_count];
-        var start = (_head - _count + _buffer.Length) % _buffer.Length;
-        for (var i = 0; i < _count; i++)
+        n = Math.Min(n, _count);
+        var result = new double[n];
+        var start = (_head - n + _buffer.Length) % _buffer.Length;
+        for (var i = 0; i < n; i++)
             result[i] = _buffer[(start + i) % _buffer.Length];
         return result;
     }

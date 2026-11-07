@@ -18,10 +18,12 @@ internal sealed class MainWindow : Form
 
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Background };
     private readonly System.Windows.Forms.Timer _retry = new() { Interval = 3000 };
+    private readonly Action<PageSettings> _onPageSettings;
     private string? _url;
 
-    public MainWindow(Icon icon)
+    public MainWindow(Icon icon, Action<PageSettings> onPageSettings)
     {
+        _onPageSettings = onPageSettings;
         Text = "WyreMonitor";
         Icon = icon;
         BackColor = Background;
@@ -75,7 +77,9 @@ internal sealed class MainWindow : Form
             settings.AreBrowserAcceleratorKeysEnabled = false;
             settings.IsStatusBarEnabled = false;
             settings.IsZoomControlEnabled = false;
-            settings.IsWebMessageEnabled = false;
+            // The page sends one kind of message: a copy of its settings for the icon next to
+            // the clock. Accepted only from the service's page, size-checked and validated.
+            settings.IsWebMessageEnabled = true;
             settings.IsGeneralAutofillEnabled = false;
             settings.IsPasswordAutosaveEnabled = false;
 
@@ -86,6 +90,13 @@ internal sealed class MainWindow : Form
                     || args.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase)
                     || args.Uri == "about:blank";
                 if (!allowed) args.Cancel = true;
+            };
+            core.WebMessageReceived += (_, args) =>
+            {
+                if (_url is null || !args.Source.StartsWith(_url + "/", StringComparison.OrdinalIgnoreCase)) return;
+                string json;
+                try { json = args.WebMessageAsJson; } catch (ArgumentException) { return; }
+                if (PageSettings.FromMessage(json) is { } page) _onPageSettings(page);
             };
             core.NewWindowRequested += (_, args) => args.Handled = true;
             core.DownloadStarting += (_, args) => args.Cancel = true;

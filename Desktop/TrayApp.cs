@@ -12,6 +12,8 @@ internal sealed class TrayApp : ApplicationContext
     private readonly NotifyIcon _tray;
     private readonly Control _uiThread = new();
     private readonly Icon _icon;
+    private readonly AppSettings _settings = AppSettings.Load();
+    private readonly TrayMonitor _monitor;
     private MainWindow? _window;
     private bool _closeHintShown;
 
@@ -39,6 +41,22 @@ internal sealed class TrayApp : ApplicationContext
             }
         };
 
+        var temperature = new ToolStripMenuItem("Show the CPU temperature on this icon") { Checked = _settings.TrayTemperature };
+        temperature.Click += (_, _) =>
+        {
+            _settings.TrayTemperature = temperature.Checked = !temperature.Checked;
+            _settings.Save();
+            _monitor!.Refresh();
+        };
+
+        var notifications = new ToolStripMenuItem("Notify me when something needs attention") { Checked = _settings.Notifications };
+        notifications.Click += (_, _) =>
+        {
+            _settings.Notifications = notifications.Checked = !notifications.Checked;
+            _settings.Save();
+            _monitor!.Refresh();
+        };
+
         var exit = new ToolStripMenuItem("Exit");
         exit.Click += (_, _) => Quit();
 
@@ -47,7 +65,8 @@ internal sealed class TrayApp : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.AddRange(new ToolStripItem[]
         {
-            version, new ToolStripSeparator(), open, autostart, new ToolStripSeparator(), exit,
+            version, new ToolStripSeparator(), open, new ToolStripSeparator(),
+            autostart, temperature, notifications, new ToolStripSeparator(), exit,
         });
 
         _tray = new NotifyIcon
@@ -62,7 +81,21 @@ internal sealed class TrayApp : ApplicationContext
             if (e.Button == MouseButtons.Left) ShowOnUiThread();
         };
 
+        // A click on a notification opens the window.
+        _tray.BalloonTipClicked += (_, _) => ShowOnUiThread();
+
+        _monitor = new TrayMonitor(_tray, _icon, _settings, ShowWindow);
+        _monitor.Refresh();
+
         if (showWindow) ShowOnUiThread();
+    }
+
+    /// <summary>The page sent its settings: the icon uses them for its temperature and alerts.</summary>
+    private void OnPageSettings(PageSettings page)
+    {
+        _settings.Page = page;
+        _settings.Save();
+        _monitor.Refresh();
     }
 
     /// <summary>Safe from any thread.</summary>
@@ -72,15 +105,15 @@ internal sealed class TrayApp : ApplicationContext
     {
         if (_window is null)
         {
-            _window = new MainWindow(_icon);
+            _window = new MainWindow(_icon, OnPageSettings);
             _window.FormClosed += (_, _) =>
             {
                 _window = null;
                 if (_closeHintShown) return;
                 _closeHintShown = true;
-                _tray.ShowBalloonTip(5000, "WyreMonitor is still running",
-                    "You'll find it here, next to the clock. To quit it: right-click the icon, then Exit.",
-                    ToolTipIcon.Info);
+                const string title = "WyreMonitor is still running";
+                const string text = "You'll find it next to the clock. To quit it: right-click the icon, then Exit.";
+                if (!Toasts.Show(title, text, ShowWindow)) _tray.ShowBalloonTip(5000, title, text, ToolTipIcon.Info);
             };
             _window.Show();
         }
@@ -101,6 +134,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         if (disposing)
         {
+            _monitor.Dispose();
             _tray.Dispose();
             _uiThread.Dispose();
         }
