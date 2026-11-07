@@ -36,6 +36,11 @@ MinVersion=10.0.17763
 OutputDir=output
 OutputBaseFilename=WyreMonitor-Setup-{#AppVersion}
 VersionInfoVersion={#AppVersion}
+VersionInfoProductName=WyreMonitor
+VersionInfoProductVersion={#AppVersion}
+VersionInfoDescription=WyreMonitor Setup
+; Before installing: what the setup changes on the PC (a service with system rights, a driver).
+InfoBeforeFile=before-install.txt
 SetupIconFile=..\app.ico
 UninstallDisplayIcon={app}\WyreMonitor.exe
 UninstallDisplayName=WyreMonitor

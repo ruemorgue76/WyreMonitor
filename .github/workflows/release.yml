@@ -1,0 +1,76 @@
+# Builds the installer on GitHub's own machines, from the code in this repository, and publishes
+# the release. Started by a version tag (Publish-Release.ps1 pushes one); can also be run by hand
+# from the Actions tab to build without publishing.
+#
+# Building here instead of on a personal PC means anyone can check how each installer was made:
+# this file, the commit and the build log are public.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*.*.*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    permissions:
+      contents: write   # only to create the release
+    steps:
+      # Actions are pinned to exact commits: a moved tag can't change what runs here.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build the installer
+        id: build
+        shell: pwsh
+        run: |
+          $setup = ./Build-Installer.ps1 | Select-Object -Last 1
+          "path=$($setup.FullName)" >> $env:GITHUB_OUTPUT
+          "name=$($setup.Name)" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: installer
+          path: ${{ steps.build.outputs.path }}
+          if-no-files-found: error
+
+      - name: Publish the release
+        if: github.event_name == 'push'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          SETUP: ${{ steps.build.outputs.path }}
+          SETUP_NAME: ${{ steps.build.outputs.name }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          # The tag must name the version the installer was built with.
+          $version = ([xml](Get-Content WyreMonitor.csproj -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG does not match version $version in WyreMonitor.csproj" }
+
+          # Release notes: the message of the tag, written by Publish-Release.ps1.
+          git fetch --force origin "refs/tags/${env:TAG}:refs/tags/${env:TAG}"
+          $notes = (git tag -l --format='%(contents:body)' $env:TAG) -join "`n"
+
+          $hash = (Get-FileHash $env:SETUP -Algorithm SHA256).Hash.ToLowerInvariant()
+          $notes += "`n`n## Verify the download`n`nBuilt by GitHub Actions from tag ``$env:TAG``. SHA-256 of ``$env:SETUP_NAME``:`n`n``````text`n$hash`n```````n`nIn PowerShell: ``Get-FileHash .\$env:SETUP_NAME``"
+          $file = Join-Path $env:RUNNER_TEMP notes.md
+          [IO.File]::WriteAllText($file, $notes)
+          gh release create $env:TAG $env:SETUP --title "WyreMonitor $version" --notes-file $file

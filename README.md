@@ -188,15 +188,15 @@ The version is written only in `<Version>` in `WyreMonitor.csproj`. The installe
 there, and the app shows it in the icon's menu.
 
 ```powershell
-winget install --id JRSoftware.InnoSetup -e
 winget install --id GitHub.cli -e
 gh auth login
 .\Publish-Release.ps1 -Version 1.1.0
 ```
 
-`Publish-Release.ps1` checks that everything is committed and pushed, sets the version, builds
-the installer, tags the commit and creates a GitHub release with the installer attached. The
-release notes list the commits since the previous version; `-Notes "..."` replaces them.
+`Publish-Release.ps1` checks that everything is committed and pushed, sets the version, and
+pushes a tag carrying the release notes. GitHub Actions then builds the installer and creates the
+release with it attached (see *Code signing policy*). The release notes list the commits since
+the previous version; `-Notes "..."` replaces them.
 
 </details>
 
@@ -222,6 +222,25 @@ Security choices:
 - **Window:** the app's window can't navigate elsewhere, open new windows or use developer tools.
 
 </details>
+
+## Code signing policy
+
+Every installer on the [releases page](../../releases) is built by GitHub Actions from the code in
+this repository, with the steps in [`.github/workflows/release.yml`](.github/workflows/release.yml):
+the commit, the build script and the build log are public. Nothing published is built on a
+personal PC. Each release lists the installer's SHA-256.
+
+Team roles. WyreMonitor has one maintainer, who holds every role:
+
+- Committers and reviewers: [ruemorgue76](https://github.com/ruemorgue76). Changes proposed by
+  anyone else (pull requests) are reviewed before they are merged.
+- Approvers (who approve each release): [ruemorgue76](https://github.com/ruemorgue76)
+
+Privacy: this program will not transfer any information to other networked systems unless
+specifically requested by the user or the person installing or operating it. In practice that
+means two requests, both to GitHub: the installer downloads the PawnIO driver from its official
+releases, and the app asks for the latest WyreMonitor version when you choose *Check for
+updates* or turn on the daily check. See [GitHub's privacy statement](https://docs.github.com/site-policy/privacy-policies/github-general-privacy-statement).
 
 ## Built with
 

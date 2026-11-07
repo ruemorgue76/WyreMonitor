@@ -1,0 +1,21 @@
+What WyreMonitor installs
+
+WyreMonitor reads your PC's temperatures, fans and loads. To do this, it installs:
+
+- The WyreMonitor app, in C:\Program Files\WyreMonitor. It runs with your normal rights.
+
+- The WyreMonitor service. It runs in the background with system rights, starts with Windows,
+  and only reads sensors. It serves the readings to the app on this PC (127.0.0.1) and cannot
+  be reached from other computers.
+
+- The PawnIO driver, if it isn't already installed. CPU temperatures and fan speeds can only be
+  read through a driver. The installer downloads PawnIO 2.2.0 from its official GitHub page
+  (github.com/namazso/PawnIO.Setup), checks the file's SHA-256, then installs it. PawnIO is
+  signed by its author and works with Windows Memory Integrity turned on.
+
+Nothing is sent from your PC. The only internet requests are the PawnIO download during this
+installation and, only when you ask for it, the check for a new WyreMonitor version on GitHub.
+
+To remove WyreMonitor: Windows Settings > Apps > WyreMonitor > Uninstall. This removes the app,
+the service and their settings. PawnIO stays, because other programs may use it; you can
+uninstall it the same way.

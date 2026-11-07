@@ -3,12 +3,14 @@
 
     Publishes a new version of WyreMonitor:
       1. checks that everything is committed and in sync with GitHub
-      2. writes the version into WyreMonitor.csproj and builds the installer
-      3. commits the version, tags it v1.1.0 and pushes both
-      4. creates the GitHub Release with the installer attached
+      2. writes the version into WyreMonitor.csproj and commits it
+      3. tags the commit v1.1.0, with the release notes in the tag's message, and pushes both
+      4. GitHub Actions (.github/workflows/release.yml) then builds the installer on GitHub's
+         machines and creates the release: nothing published is built on this PC
 
     Without -Notes, the release notes list the commits since the previous version.
     Needs GitHub CLI signed in: winget install --id GitHub.cli -e, then gh auth login
+    To try a build without publishing: .\Build-Installer.ps1 (local) or "Run workflow" on GitHub.
 #>
 param(
     [Parameter(Mandatory)] [string] $Version,
@@ -55,46 +57,25 @@ if (-not $Notes) {
     $Notes = "## What's new`n`n" + ($lines -join "`n")
 }
 
-# --- 2. Version and installer ------------------------------------------------------
-$bumped = $false
+# --- 2. Version ------------------------------------------------------------------
 if ($Version -ne $current) {
     $text = Get-Content $csproj -Raw
     $text = $text -replace "<Version>$([regex]::Escape($current))</Version>", "<Version>$Version</Version>"
     [IO.File]::WriteAllText((Resolve-Path $csproj), $text)
-    $bumped = $true
-}
-
-try {
-    $setup = & .\Build-Installer.ps1 | Select-Object -Last 1
-}
-catch {
-    if ($bumped) { Invoke-Git checkout -- $csproj | Out-Null }
-    throw
-}
-
-# The installer is not code-signed: publish its SHA-256 so downloads can be checked.
-$hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
-$Notes += "`n`n## Verify the download`n`nSHA-256 of ``$($setup.Name)``:`n`n``````text`n$hash`n```````n`nIn PowerShell: ``Get-FileHash .\$($setup.Name)``"
-
-# --- 3. Commit, tag, push ----------------------------------------------------------
-if ($bumped) {
     Invoke-Git add $csproj | Out-Null
     Invoke-Git commit -m "Version $Version" | Out-Null
 }
-Invoke-Git tag -a $tag -m "WyreMonitor $Version" | Out-Null
+
+# --- 3. Tag with the notes, push ---------------------------------------------------
+# The tag's first line is its title; the rest becomes the release notes on GitHub.
+# verbatim: git would otherwise drop the notes' "## ..." headings as comments.
+$tagFile = [IO.Path]::GetTempFileName()
+[IO.File]::WriteAllText($tagFile, "WyreMonitor $Version`n`n$Notes`n")
+try { Invoke-Git tag -a $tag --cleanup=verbatim -F $tagFile | Out-Null }
+finally { Remove-Item $tagFile -ErrorAction SilentlyContinue }
 Invoke-Git push --quiet origin main $tag | Out-Null
 
-# --- 4. Release with the installer -------------------------------------------------
-$notesFile = [IO.Path]::GetTempFileName()
-[IO.File]::WriteAllText($notesFile, $Notes)
-try {
-    & $gh release create $tag $setup.FullName --title "WyreMonitor $Version" --notes-file $notesFile
-    if ($LASTEXITCODE -ne 0) {
-        throw "Release not created. The version and tag are already on GitHub: retry with`n  gh release create $tag `"$($setup.FullName)`" --title `"WyreMonitor $Version`""
-    }
-}
-finally {
-    Remove-Item $notesFile -ErrorAction SilentlyContinue
-}
-
-Write-Host "Published WyreMonitor $Version" -ForegroundColor Green
+# --- 4. GitHub builds and publishes ------------------------------------------------
+Write-Host "Version $Version pushed. GitHub is building the installer and will publish the release:" -ForegroundColor Green
+Write-Host "  https://github.com/ruemorgue76/WyreMonitor/actions"
+Write-Host "To follow it here: gh run watch"
