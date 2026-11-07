@@ -8,7 +8,19 @@ namespace WyreMonitor;
 internal static class Program
 {
     // Set once the tray exists; called from Kestrel threads, TrayApp marshals to the UI thread.
+    // A request that arrives earlier (the server starts before the tray) is kept as pending.
     private static Action? _showWindow;
+    private static bool _showPending;
+    private static readonly object ShowLock = new();
+
+    private static void RequestShowWindow()
+    {
+        lock (ShowLock)
+        {
+            if (_showWindow is null) _showPending = true;
+            else _showWindow();
+        }
+    }
 
     [STAThread]
     private static int Main(string[] args)
@@ -59,15 +71,25 @@ internal static class Program
         Application.SetCompatibleTextRenderingDefault(false);
 
         var server = StartServer();
+        Launcher.WritePort(AppInfo.Port);
 
         using (var tray = new TrayApp(showWindow: !background))
         {
-            _showWindow = tray.ShowWindow;
+            lock (ShowLock)
+            {
+                _showWindow = tray.ShowWindow;
+                if (_showPending)
+                {
+                    _showPending = false;
+                    tray.ShowWindow();
+                }
+            }
             Application.Run(tray);
-            _showWindow = null;
+            lock (ShowLock) _showWindow = null;
         }
 
         // Closes the hardware session and unloads the driver cleanly.
+        Launcher.DeletePort();
         server.StopAsync().Wait(TimeSpan.FromSeconds(3));
         server.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(3));
         return 0;
@@ -138,7 +160,7 @@ internal static class Program
         app.MapPost("/api/show", (HttpRequest request) =>
         {
             if (!request.Headers.ContainsKey(AppInfo.ShowHeader)) return Results.StatusCode(403);
-            _showWindow?.Invoke();
+            RequestShowWindow();
             return Results.NoContent();
         });
 

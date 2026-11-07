@@ -9,7 +9,14 @@ namespace WyreMonitor.Desktop;
 /// <summary>Finds a running instance and starts this app with admin rights.</summary>
 internal static class Launcher
 {
-    private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromSeconds(1) };
+    // Only ever talks to 127.0.0.1: no proxy (looking one up can take seconds per request),
+    // and a short connect timeout, since a free port refuses at once.
+    private static readonly HttpClient Http = new(new SocketsHttpHandler
+    {
+        UseProxy = false,
+        ConnectTimeout = TimeSpan.FromMilliseconds(500),
+    })
+    { Timeout = TimeSpan.FromSeconds(2) };
 
     public static bool IsElevated()
     {
@@ -17,20 +24,59 @@ internal static class Launcher
         return new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
     }
 
-    /// <summary>The port of a running WyreMonitor, or null. Other programs on the ports are ignored.</summary>
+    private static string MutexName => $@"Local\{AppInfo.Name}.Instance";
+    private static string PortFile => Path.Combine(AppInfo.DataDir, "port");
+
+    /// <summary>True when an instance holds the mutex. Instant, unlike probing ports.</summary>
+    private static bool InstanceExists()
+    {
+        try
+        {
+            if (!Mutex.TryOpenExisting(MutexName, out var existing)) return false;
+            existing.Dispose();
+            return true;
+        }
+        catch (UnauthorizedAccessException)
+        {
+            return true;   // held by the elevated instance
+        }
+    }
+
+    /// <summary>
+    /// The port of a running WyreMonitor, or null. Checks the mutex first and then only the port
+    /// the instance wrote down: on Windows a connection to a closed port takes about a second to
+    /// fail, so probing the whole range made every launch slow.
+    /// </summary>
     public static int? FindRunning()
     {
-        for (var port = AppInfo.FirstPort; port < AppInfo.FirstPort + AppInfo.PortCount; port++)
+        if (!InstanceExists()) return null;
+        try
         {
-            try
-            {
-                var json = Http.GetStringAsync($"http://127.0.0.1:{port}/api/health").GetAwaiter().GetResult();
-                using var doc = JsonDocument.Parse(json);
-                if (doc.RootElement.TryGetProperty("app", out var app) && app.GetString() == AppInfo.Name) return port;
-            }
-            catch { /* nothing there, or not us */ }
+            if (!int.TryParse(File.ReadAllText(PortFile).Trim(), out var port)) return null;
+            var json = Http.GetStringAsync($"http://127.0.0.1:{port}/api/health").GetAwaiter().GetResult();
+            using var doc = JsonDocument.Parse(json);
+            return doc.RootElement.TryGetProperty("app", out var app) && app.GetString() == AppInfo.Name ? port : null;
         }
-        return null;
+        catch
+        {
+            return null;   // still starting: no port written yet, or the server isn't answering yet
+        }
+    }
+
+    /// <summary>Written by the instance once its server listens; removed when it quits.</summary>
+    public static void WritePort(int port)
+    {
+        try
+        {
+            Directory.CreateDirectory(AppInfo.DataDir);
+            File.WriteAllText(PortFile, port.ToString());
+        }
+        catch { /* a second launch then simply waits for the mutex holder */ }
+    }
+
+    public static void DeletePort()
+    {
+        try { File.Delete(PortFile); } catch { /* best effort */ }
     }
 
     public static int? WaitForRunning(TimeSpan timeout)
@@ -39,7 +85,7 @@ internal static class Launcher
         while (DateTime.UtcNow < deadline)
         {
             if (FindRunning() is { } port) return port;
-            Thread.Sleep(300);
+            Thread.Sleep(200);
         }
         return null;
     }
@@ -69,7 +115,7 @@ internal static class Launcher
     {
         try
         {
-            var mutex = new Mutex(initiallyOwned: true, $@"Local\{AppInfo.Name}.Instance", out var created);
+            var mutex = new Mutex(initiallyOwned: true, MutexName, out var created);
             if (created) return mutex;
             mutex.Dispose();
             return null;
