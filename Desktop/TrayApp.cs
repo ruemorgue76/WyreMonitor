@@ -20,7 +20,7 @@ internal sealed class TrayApp : ApplicationContext
     private MiniWindow? _mini;
     private bool _closeHintShown;
 
-    public TrayApp(bool showWindow)
+    public TrayApp(bool showWindow, bool showMini = false)
     {
         _ = _uiThread.Handle;   // forces creation, so BeginInvoke works from other threads
         _icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application;
@@ -109,7 +109,8 @@ internal sealed class TrayApp : ApplicationContext
         _updateTimer.Start();
         _ = AutoCheckAsync();
 
-        if (_settings.MiniWindow) SetMini(true);
+        if (showMini) OpenMini(remember: false);
+        else if (_settings.MiniWindow) SetMini(true);
         if (showWindow) ShowOnUiThread();
     }
 
@@ -117,21 +118,24 @@ internal sealed class TrayApp : ApplicationContext
     {
         _settings.MiniWindow = _miniItem.Checked = open;
         _settings.Save();
-        if (open && _mini is null)
+        if (open) OpenMini(remember: true);
+        else _mini?.Close();
+    }
+
+    /// <param name="remember">False for a one-off --mini run: nothing is saved about it.</param>
+    private void OpenMini(bool remember)
+    {
+        if (_mini is not null) return;
+        _mini = new MiniWindow(_icon, _settings, ShowWindow, remember);
+        _mini.FormClosed += (_, _) =>
         {
-            _mini = new MiniWindow(_icon, _settings);
-            _mini.FormClosed += (_, _) =>
-            {
-                _mini = null;
-                // Closed with its own X: it stays closed next time too. Not when quitting the app.
-                if (!_quitting) { _settings.MiniWindow = _miniItem.Checked = false; _settings.Save(); }
-            };
-            _mini.Show();
-        }
-        else if (!open)
-        {
-            _mini?.Close();
-        }
+            _mini = null;
+            // Closed with its own ×: it stays closed next time too. Not when quitting the app.
+            if (remember && !_quitting) { _settings.MiniWindow = _miniItem.Checked = false; _settings.Save(); }
+            else _miniItem.Checked = _settings.MiniWindow;
+        };
+        _miniItem.Checked = true;
+        _mini.Show();
     }
 
     private async Task AutoCheckAsync()
@@ -179,7 +183,12 @@ internal sealed class TrayApp : ApplicationContext
                 _closeHintShown = true;
                 const string title = "WyreMonitor is still running";
                 const string text = "You'll find it next to the clock. To quit it: right-click the icon, then Exit.";
-                if (!Toasts.Show(title, text, ShowWindow)) _tray.ShowBalloonTip(5000, title, text, ToolTipIcon.Info);
+                // Shown right after the close, not inside it: Windows refuses a notification
+                // created while it is still delivering a synchronous message to this window.
+                _uiThread.BeginInvoke(() =>
+                {
+                    if (!Toasts.Show(title, text, ShowWindow)) _tray.ShowBalloonTip(5000, title, text, ToolTipIcon.Info);
+                });
             };
             _window.Show();
         }

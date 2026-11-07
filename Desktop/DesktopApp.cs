@@ -14,6 +14,7 @@ internal static class DesktopApp
     public static int Run(string[] args)
     {
         var background = args.Contains(AppInfo.BackgroundFlag);
+        var mini = args.Contains(AppInfo.MiniFlag);
 
         // One app per user session. A second launch (Start menu, desktop) asks the first one to
         // show its window through a named event, then exits.
@@ -30,7 +31,7 @@ internal static class DesktopApp
 
         if (!isFirst)
         {
-            if (!background) showSignal?.Set();
+            if (!background && !mini) showSignal?.Set();
             showSignal?.Dispose();
             return 0;
         }
@@ -40,7 +41,7 @@ internal static class DesktopApp
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
-        using var tray = new TrayApp(showWindow: !background);
+        using var tray = new TrayApp(showWindow: !background && !mini, showMini: mini);
 
         if (showSignal is not null)
         {

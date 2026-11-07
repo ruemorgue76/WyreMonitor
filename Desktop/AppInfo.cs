@@ -13,6 +13,8 @@ internal static class AppInfo
 
     public const string ServiceFlag = "--service";
     public const string BackgroundFlag = "--background";
+    /// <summary>Opens the small always-on-top window for this run only, without saving the choice.</summary>
+    public const string MiniFlag = "--mini";
     public const string ServiceName = "WyreMonitor";
 
     // The service listens on the first free port from FirstPort on and writes it here.
