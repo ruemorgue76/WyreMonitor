@@ -27,7 +27,8 @@ part where it sits on the board and answers the question you opened it for:
 - **Limits per part.** Colour shows how close each reading is to *that part's* limit:
   45 °C is fine for a CPU and a lot for a hard disk.
 - **The real layout.** Ryzen and Threadripper chiplets each get their own temperature, and every
-  thread has its own load bar. Memory modules sit beside the socket, drives below.
+  thread has its own load bar. Memory modules sit beside the socket, drives below. The board
+  takes the room its parts need: a small office PC gets a small board, a workstation a big one.
 - **Every sensor, when you want it.** Click any part to see all its readings and a chart of the
   last 1, 5 or 15 minutes.
 - **Read at a glance.** Gold pads show how busy a part is, grey bars how full, and the colour of
