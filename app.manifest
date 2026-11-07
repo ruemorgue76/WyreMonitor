@@ -4,9 +4,8 @@
   <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
     <security>
       <requestedPrivileges xmlns="urn:schemas-microsoft-com:asm.v3">
-        <!-- Sensor access (SuperIO / EC) needs administrator rights, but requiring them here
-             would show a UAC prompt on every click. The app starts unelevated and restarts
-             itself through a scheduled task: see Desktop/Launcher.cs. -->
+        <!-- Never elevated: the sensors are read by the WyreMonitor service (LocalSystem),
+             the desktop app runs with the user's normal rights. See Program.cs. -->
         <requestedExecutionLevel level="asInvoker" uiAccess="false" />
       </requestedPrivileges>
     </security>

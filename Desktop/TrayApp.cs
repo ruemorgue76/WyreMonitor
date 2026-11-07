@@ -4,7 +4,7 @@ using System.Windows.Forms;
 namespace WyreMonitor.Desktop;
 
 /// <summary>
-/// The app's lifetime: the tray icon stays until "Esci". The window is created when
+/// The app's lifetime: the tray icon stays until "Exit". The window is created when
 /// needed and destroyed on close, so the page uses no resources while nobody looks at it.
 /// </summary>
 internal sealed class TrayApp : ApplicationContext
@@ -23,20 +23,17 @@ internal sealed class TrayApp : ApplicationContext
         var open = new ToolStripMenuItem("Open WyreMonitor") { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         open.Click += (_, _) => ShowOnUiThread();
 
-        var autostart = new ToolStripMenuItem("Start with Windows")
-        {
-            Enabled = Launcher.IsElevated() && Launcher.AutostartAvailable(),
-            Checked = Launcher.AutostartEnabled(),
-        };
+        var autostart = new ToolStripMenuItem("Start with Windows") { Checked = ServiceLink.AutostartEnabled };
         autostart.Click += (_, _) =>
         {
-            var wanted = !autostart.Checked;
-            if (Launcher.SetAutostart(wanted))
+            try
             {
-                autostart.Checked = wanted;
+                ServiceLink.SetAutostart(!autostart.Checked);
+                autostart.Checked = ServiceLink.AutostartEnabled;
             }
-            else
+            catch (Exception ex)
             {
+                AppInfo.LogError(ex);
                 MessageBox.Show("Couldn't change the start with Windows setting.", "WyreMonitor",
                     MessageBoxButtons.OK, MessageBoxIcon.Warning);
             }

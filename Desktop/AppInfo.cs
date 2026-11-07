@@ -11,21 +11,18 @@ internal static class AppInfo
 
     private static string FormatVersion(Version? v) => v is null ? "?" : $"{v.Major}.{v.Minor}.{v.Build}";
 
-    // The app listens on the first free port from FirstPort on.
+    public const string ServiceFlag = "--service";
+    public const string BackgroundFlag = "--background";
+    public const string ServiceName = "WyreMonitor";
+
+    // The service listens on the first free port from FirstPort on and writes it here.
+    // HKLM: only administrators can change it, so the desktop app can trust it.
     public const int FirstPort = 5005;
     public const int PortCount = 10;
-    public static int Port { get; set; } = FirstPort;
-    public static string Url => $"http://127.0.0.1:{Port}";
+    public const string RegistryKey = @"SOFTWARE\WyreMonitor";
+    public const string PortValue = "Port";
 
-    public const string BackgroundFlag = "--background";
-    public const string NoElevateFlag = "--no-elevate";
-    public const string ShowHeader = "X-WyreMonitor-Show";
-
-    // Started on demand: gives a click on the shortcut admin rights with no UAC prompt.
-    public const string LaunchTask = "WyreMonitor";
-    // Same action, with a logon trigger. Enabled or disabled from the tray menu.
-    public const string AutostartTask = "WyreMonitor Autostart";
-
+    /// <summary>The desktop app's own data: the window's browser profile and its error log.</summary>
     public static string DataDir { get; } =
         Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), Name);
 

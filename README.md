@@ -56,20 +56,30 @@ Parts a PC doesn't report are left out of the drawing instead of showing up empt
 ## Install
 
 1. Download `WyreMonitor-Setup-<version>.exe` from the [latest release](../../releases/latest).
-2. Run it. The installer is not code-signed yet, so Windows may show "Windows protected your PC":
+2. Check the download if you like: the release notes list its SHA-256, and
+   `Get-FileHash .\WyreMonitor-Setup-<version>.exe` in PowerShell prints the one you have.
+3. Run it. The installer is not code-signed yet, so Windows may show "Windows protected your PC":
    choose **More info**, then **Run anyway**.
-3. Open WyreMonitor from the Start menu.
+4. Open WyreMonitor from the Start menu.
 
-The installer puts the app in `C:\Program Files\WyreMonitor` with the .NET runtime included.
-It also installs [PawnIO](https://github.com/namazso/PawnIO.Setup) through `winget` if it is
-missing, and creates two scheduled tasks that let the app run with administrator rights without
-a prompt every time.
+WyreMonitor has two parts:
 
-Closing the window keeps WyreMonitor next to the clock. **Exit** in the icon's menu quits it, and
-**Start with Windows** turns the automatic start on or off.
+- **The WyreMonitor service** reads the sensors. It runs in the background as a Windows service,
+  starts with Windows, and serves the data on `127.0.0.1` only. When no window has shown the data
+  for a minute, it stops reading the sensors until one does.
+- **The app** shows the window and the icon next to the clock. It runs with your normal rights,
+  never as administrator.
 
-**Uninstall** from Windows Settings › Apps. This removes the app, its scheduled tasks and its data.
-PawnIO stays, since other programs may use it.
+The installer puts both in `C:\Program Files\WyreMonitor`, with the .NET runtime included. If
+[PawnIO](https://github.com/namazso/PawnIO.Setup) is missing, it downloads a fixed version from
+its official releases, checks the file's SHA-256, then installs it.
+
+Closing the window keeps the app next to the clock. **Exit** in the icon's menu quits it, and
+**Start with Windows** turns the icon at sign-in on or off.
+
+**Uninstall** from Windows Settings › Apps. This removes the app, the service and their settings.
+PawnIO stays, since other programs may use it. The window's browser data stays in
+`%LOCALAPPDATA%\WyreMonitor`, and you can delete that folder yourself.
 
 ### Requirements
 
@@ -81,8 +91,16 @@ PawnIO stays, since other programs may use it.
 
 **Why does it need administrator rights?**
 Reading CPU temperatures, fans and motherboard probes goes through a kernel driver, which only
-administrators can use. You confirm once, when installing. After that a scheduled task starts
-the app with those rights, so no prompt appears when you open it.
+administrators can use. You confirm once, when installing. From then on only the WyreMonitor
+service uses the driver, as a standard Windows service. The app you see runs with your normal
+rights, so opening it never asks for confirmation.
+
+**Is the service safe to leave running?**
+It only reads sensors and listens on `127.0.0.1`, so other computers cannot reach it. It refuses
+requests addressed to any other host name, which blocks web pages that try to reach it through
+their own domain. It takes no settings from your user account, and writes only its port number,
+to a registry key that only administrators can change. With no window open for a minute it stops
+reading the sensors and uses almost no CPU.
 
 **Does it work on laptops?**
 Yes for CPU, graphics, memory, drives and battery. Most laptops don't expose their fans and board
@@ -93,10 +111,10 @@ No, WyreMonitor only reads sensors. For fan curves, look at
 [Fan Control](https://github.com/Rem0o/FanControl.Releases).
 
 **My antivirus flags it. Is it safe?**
-The source code is all here and you can build it yourself. The app uses PawnIO, a signed driver
-that works with Windows Memory Integrity turned on, instead of the old WinRing0 driver that many
-antivirus programs block. Some antivirus programs still distrust new apps that use a driver, start
-with Windows and run as administrator.
+The source code is all here and you can build it yourself. WyreMonitor uses PawnIO, a signed
+driver that works with Windows Memory Integrity turned on, instead of the old WinRing0 driver
+that many antivirus programs block. Some antivirus programs still distrust new apps that install
+a service and use a driver.
 
 **Does it send any data?**
 No. It talks only to your own hardware and serves its page on `127.0.0.1`, which other
@@ -116,7 +134,7 @@ You need the .NET 10 SDK, and Inno Setup 6 for the installer.
 
 ```powershell
 dotnet build -c Release            # build
-.\Start-WyreMonitor.ps1            # build into dist\ and run it (closes the installed instance)
+.\Start-WyreMonitor.ps1            # build into dist\ and run service + app (stops the installed ones)
 .\Build-Installer.ps1              # installer in installer\output\
 ```
 
@@ -144,14 +162,21 @@ release notes list the commits since the previous version; `-Notes "..."` replac
 
 | Part | Files | Role |
 |---|---|---|
-| Sensors | `Hardware/` | Polls LibreHardwareMonitor every second in the background and publishes an immutable snapshot with a 60-sample history per sensor. |
-| Local server | `Program.cs` | Serves the page and `/api/sensors` on `127.0.0.1`, port 5005 or the next free one up to 5014. |
-| Desktop app | `Desktop/` | WebView2 window, icon next to the clock, single instance, elevation through the scheduled task. |
+| Entry point | `Program.cs` | One executable: `--service` runs the service, no argument runs the app. |
+| Sensors | `Hardware/` | Reads LibreHardwareMonitor in the background, each part at its own pace, and publishes an immutable snapshot with a 60-second history per sensor. |
+| Service | `Service/` | Windows service (LocalSystem). Serves the page and a read-only `/api/sensors` on `127.0.0.1`, port 5005 or the next free one up to 5014, and writes the port to `HKLM\SOFTWARE\WyreMonitor`. |
+| App | `Desktop/` | Runs with the user's rights: WebView2 window locked to the service's page, icon next to the clock, single instance, start at sign-in through the user's Run key. |
 | Page | `wwwroot/` | The board drawing, the alerts and the detail panel. Plain HTML, CSS and JavaScript, no external requests. |
-| Installer | `installer/`, `Build-Installer.ps1` | Inno Setup script and scheduled tasks. |
+| Installer | `installer/`, `Build-Installer.ps1` | Inno Setup script: files, service, PawnIO (pinned version, SHA-256 checked). |
 
-The server exposes read-only sensor data. Its only write endpoint, `/api/show`, brings the window
-to the front and requires a header that web pages cannot send.
+Security choices:
+
+- **Rights:** the service is the only part with administrator rights. It accepts no input that a
+  normal user could change: no command-line or environment configuration, no files in user
+  folders, and .NET startup hooks are turned off.
+- **Server:** listens only on `127.0.0.1`, accepts only the `127.0.0.1` and `localhost` host names
+  (which blocks DNS rebinding), and sends a strict Content-Security-Policy.
+- **Window:** the app's window can't navigate elsewhere, open new windows or use developer tools.
 
 </details>
 

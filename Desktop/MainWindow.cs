@@ -6,13 +6,19 @@ using Microsoft.Web.WebView2.WinForms;
 
 namespace WyreMonitor.Desktop;
 
-/// <summary>The app window: the dashboard shown in WebView2, the Edge engine built into Windows.</summary>
+/// <summary>
+/// The app window: the page served by the WyreMonitor service, shown in WebView2 (the Edge
+/// engine built into Windows). It runs with the user's normal rights and can show nothing but
+/// that page: other addresses, new windows and developer tools are blocked.
+/// </summary>
 internal sealed class MainWindow : Form
 {
     // Same colour as the page background, so opening never flashes white.
     private static readonly Color Background = ColorTranslator.FromHtml("#0c2a25");
 
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Background };
+    private readonly System.Windows.Forms.Timer _retry = new() { Interval = 3000 };
+    private string? _url;
 
     public MainWindow(Icon icon)
     {
@@ -26,6 +32,7 @@ internal sealed class MainWindow : Form
         Size = new Size(Math.Min(1680, screen.Width - 40), Math.Min(1000, screen.Height - 40));
 
         Controls.Add(_web);
+        _retry.Tick += async (_, _) => await ConnectAsync();
     }
 
     protected override void OnHandleCreated(EventArgs e)
@@ -56,17 +63,33 @@ internal sealed class MainWindow : Form
         base.OnShown(e);
         try
         {
-            // Program Files is not writable: the browser profile lives under the user's data.
             var environment = await CoreWebView2Environment.CreateAsync(
                 userDataFolder: Path.Combine(AppInfo.DataDir, "WebView2"));
             await _web.EnsureCoreWebView2Async(environment);
 
-            var settings = _web.CoreWebView2.Settings;
+            var core = _web.CoreWebView2;
+            var settings = core.Settings;
             settings.AreDefaultContextMenusEnabled = false;
+            settings.AreDevToolsEnabled = false;
+            settings.AreBrowserAcceleratorKeysEnabled = false;
             settings.IsStatusBarEnabled = false;
             settings.IsZoomControlEnabled = false;
+            settings.IsWebMessageEnabled = false;
+            settings.IsGeneralAutofillEnabled = false;
+            settings.IsPasswordAutosaveEnabled = false;
 
-            _web.Source = new Uri($"{AppInfo.Url}/");
+            // Only the service's page, and the "not running" message the app writes itself.
+            core.NavigationStarting += (_, args) =>
+            {
+                var allowed = (_url is not null && args.Uri.StartsWith(_url + "/", StringComparison.OrdinalIgnoreCase))
+                    || args.Uri.StartsWith("data:text/html", StringComparison.OrdinalIgnoreCase)
+                    || args.Uri == "about:blank";
+                if (!allowed) args.Cancel = true;
+            };
+            core.NewWindowRequested += (_, args) => args.Handled = true;
+            core.DownloadStarting += (_, args) => args.Cancel = true;
+
+            await ConnectAsync();
         }
         catch (WebView2RuntimeNotFoundException)
         {
@@ -85,15 +108,42 @@ internal sealed class MainWindow : Form
         }
     }
 
+    /// <summary>Shows the page, or a message while the service is not running yet.</summary>
+    private async Task ConnectAsync()
+    {
+        if (IsDisposed || _web.CoreWebView2 is null) return;
+        _retry.Stop();
+
+        var url = await ServiceLink.FindUrlAsync();
+        if (IsDisposed) return;
+
+        if (url is null)
+        {
+            _url = null;
+            _web.CoreWebView2.NavigateToString(ServiceMissingPage);
+            _retry.Start();
+            return;
+        }
+
+        _url = url;
+        _web.CoreWebView2.Navigate($"{url}/");
+    }
+
+    private const string ServiceMissingPage = """
+        <!doctype html><html lang="en"><meta charset="utf-8"><title>WyreMonitor</title>
+        <body style="margin:0;background:#0c2a25;color:#f0f1e4;font:16px/1.5 'Segoe UI',sans-serif">
+        <div style="padding:48px;max-width:640px">
+        <h1 style="font-size:28px;margin:0 0 8px">Waiting for the WyreMonitor service</h1>
+        <p style="color:#a9c4b9;margin:0">The service that reads the sensors isn't running yet. Right after Windows
+        starts this can take a few seconds. If this page stays, open Services, find WyreMonitor and start it,
+        or reinstall WyreMonitor.</p></div></body></html>
+        """;
+
     protected override void OnFormClosed(FormClosedEventArgs e)
     {
         base.OnFormClosed(e);
+        _retry.Dispose();
         _web.Dispose();
-        BeginInvokeDispose();
-    }
-
-    private void BeginInvokeDispose()
-    {
         // Disposing a Form inside its own close handler is unsafe: do it right after.
         if (IsHandleCreated) BeginInvoke(Dispose);
     }
@@ -103,5 +153,6 @@ internal sealed class MainWindow : Form
     private const int DwmTextColor = 36;
 
     [DllImport("dwmapi.dll")]
+    [DefaultDllImportSearchPaths(DllImportSearchPath.System32)]
     private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
 }

@@ -72,6 +72,10 @@ catch {
     throw
 }
 
+# The installer is not code-signed: publish its SHA-256 so downloads can be checked.
+$hash = (Get-FileHash $setup.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+$Notes += "`n`n## Verify the download`n`nSHA-256 of ``$($setup.Name)``:`n`n``````text`n$hash`n```````n`nIn PowerShell: ``Get-FileHash .\$($setup.Name)``"
+
 # --- 3. Commit, tag, push ----------------------------------------------------------
 if ($bumped) {
     Invoke-Git add $csproj | Out-Null

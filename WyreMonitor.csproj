@@ -13,8 +13,13 @@
     <Platforms>x64</Platforms>
     <PlatformTarget>x64</PlatformTarget>
     <RuntimeIdentifier>win-x64</RuntimeIdentifier>
-    <!-- The exe starts unelevated and obtains admin rights itself: see Desktop/Launcher.cs. -->
+    <!-- The same exe runs as the service (LocalSystem) and as the desktop app (user rights):
+         see Program.cs. The manifest never asks for elevation. -->
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- Security: .NET must not load code named by environment variables (DOTNET_STARTUP_HOOKS). -->
+    <StartupHookSupport>false</StartupHookSupport>
+    <!-- Pin every dependency, transitive ones included, to the exact versions in packages.lock.json. -->
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
     <AssemblyName>WyreMonitor</AssemblyName>
     <RootNamespace>WyreMonitor</RootNamespace>
     <InvariantGlobalization>true</InvariantGlobalization>
@@ -38,6 +43,8 @@
          Windows Memory Integrity (HVCI) enabled, where WinRing0 is blocked. -->
     <PackageReference Include="LibreHardwareMonitorLib" Version="0.9.7-pre705" />
     <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
+    <!-- Runs the sensor half as a Windows service. -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="10.0.11" />
     <!-- Finds the disk Windows runs from (already a dependency of LibreHardwareMonitorLib). -->
     <PackageReference Include="System.Management" Version="10.0.9" />
   </ItemGroup>

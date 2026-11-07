@@ -25,10 +25,12 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     private string? _systemDrive;
 
     // Reading every sensor takes a few hundred milliseconds on a big machine, mostly in parts
-    // whose values change slowly. Each part is read at its own pace (see IntervalFor), and
-    // everything slows down while no window shows the page.
+    // whose values change slowly. Each part is read at its own pace (see IntervalFor). With no
+    // window open the service slows down, and after IdleStop it stops reading altogether: it
+    // runs all the time, and nobody is looking.
     private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(5);
     private static readonly TimeSpan ClientTimeout = TimeSpan.FromSeconds(10);
+    private static readonly TimeSpan IdleStop = TimeSpan.FromSeconds(60);
     private readonly Dictionary<IHardware, DateTime> _lastUpdate = new();
     private readonly HashSet<IHardware> _neverUpdate = new();
     private DateTime _lastPoll = DateTime.MinValue;
@@ -86,10 +88,15 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>Every second while a page is open, every IdleInterval otherwise.</summary>
+    /// <summary>Every second while a page is open, every IdleInterval for a minute after, then not at all.</summary>
     private void Tick()
     {
-        if (!ClientActive && DateTime.UtcNow - _lastPoll < IdleInterval - TimeSpan.FromMilliseconds(100)) return;
+        if (!ClientActive)
+        {
+            var sinceClient = TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastClientRequest));
+            if (sinceClient > IdleStop) return;
+            if (DateTime.UtcNow - _lastPoll < IdleInterval - TimeSpan.FromMilliseconds(100)) return;
+        }
         Poll();
     }
 
@@ -130,7 +137,14 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
             var now = DateTime.UtcNow;
             // The history holds one sample per second: after a slow (idle) poll, the value is
             // repeated for the seconds that passed, so the chart's time axis stays true.
-            var samples = _lastPoll == DateTime.MinValue ? 1 : (int)Math.Clamp(Math.Round((now - _lastPoll).TotalSeconds), 1, 10);
+            var gap = now - _lastPoll;
+            var samples = _lastPoll == DateTime.MinValue ? 1 : (int)Math.Clamp(Math.Round(gap.TotalSeconds), 1, 10);
+            // After a pause in reading, the old history no longer describes the last minute.
+            if (_lastPoll != DateTime.MinValue && gap > IdleStop)
+            {
+                _history.Clear();
+                samples = 1;
+            }
             _lastPoll = now;
 
             UpdateHardware(now);

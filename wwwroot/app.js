@@ -717,12 +717,12 @@ function updateVerdict(m) {
   }
   if (!m.snapshot.hardware.length) {
     renderVerdict("No sensors found",
-      "<span>Quit WyreMonitor from the icon next to the clock, then open it again and accept the administrator prompt.</span>", "none");
+      "<span>The WyreMonitor service found no hardware to read. Restart it in Services, or reinstall WyreMonitor.</span>", "none");
     return;
   }
   if (!m.snapshot.elevated) {
     renderVerdict("Temperatures and fans unavailable",
-      "<span>WyreMonitor is running without administrator rights. Quit it from the icon next to the clock, then open it again and accept the prompt.</span>",
+      "<span>The WyreMonitor service is running without administrator rights. Reinstall WyreMonitor to set it up again.</span>",
       "noadmin");
     return;
   }
@@ -944,8 +944,8 @@ async function poll() {
     state.failed = true;
     document.body.classList.add("stale");
     const seconds = state.lastOk ? Math.round((Date.now() - state.lastOk) / 1000) : null;
-    renderVerdict("WyreMonitor isn't responding",
-      `<span>${seconds == null ? "No data received." : `No data for ${seconds} seconds.`} Quit it and open it again from the Start menu.</span>`,
+    renderVerdict("The WyreMonitor service isn't responding",
+      `<span>${seconds == null ? "No data received." : `No data for ${seconds} seconds.`} Restart the WyreMonitor service in Services, or reinstall WyreMonitor.</span>`,
       `down:${seconds}`);
     setText($("fresh"), "");
   } finally {
