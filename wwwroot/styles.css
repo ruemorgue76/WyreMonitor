@@ -589,18 +589,18 @@ body.list-view .board-wrap { display: none; }
 /* Resolved on body, so a component that redefines --gold keeps the board's for its outline. */
 body { --select: var(--gold); }
 
-body[data-theme="black"] {
+body[data-theme="black"], html:has(body[data-theme="black"]) {
   --control: #73787f;
   --mask: #101112; --mask-up: #18191b; --trace: #3b3f44; --epoxy: #070708; --epoxy-up: #1f2023;
   --silk: #ececea; --silk-dim: #a4a8ad; --gold-dim: #34322c; --edge: #3a3d40;
 }
-body[data-theme="blue"] {
+body[data-theme="blue"], html:has(body[data-theme="blue"]) {
   --control: #5583c6;
   --mask: #0a1a33; --mask-up: #0f2548; --trace: #2b5c9e; --epoxy: #0d1119; --epoxy-up: #1b2433;
   --silk: #eef3fb; --silk-dim: #a9bddb; --gold-dim: #2c3646; --edge: #34405a;
 }
 /* White solder mask: dark silkscreen on the board, the components stay black. */
-body[data-theme="white"] {
+body[data-theme="white"], html:has(body[data-theme="white"]) {
   color-scheme: light;
   --mask: #e4e8e1; --mask-up: #f7f8f4; --trace: #b5c2b1; --epoxy: #1d2224; --epoxy-up: #2c3336;
   --silk: #17201c; --silk-dim: #4f5d56; --gold: #9a7318; --gold-dim: #3e3a30; --alert: #c4441a;
