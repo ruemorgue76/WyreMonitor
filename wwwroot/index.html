@@ -18,6 +18,7 @@
     </div>
     <div class="tools">
       <p class="fresh" id="fresh"></p>
+      <button type="button" class="tool" id="viewToggle" aria-controls="list">List view</button>
       <button type="button" class="tool" id="railToggle" aria-controls="rail">Hide detail</button>
       <button type="button" class="tool" id="settingsToggle" aria-expanded="false" aria-controls="settings">Settings</button>
     </div>
@@ -56,6 +57,7 @@
         <label><input type="checkbox" name="alert" value="wear" /> SSD near the end of its life</label>
         <button type="button" class="link" id="resetAlerts">Restore the default alerts</button>
       </fieldset>
+      <p class="settings-note" id="exportNote" hidden><button type="button" class="link" id="exportCsv">Export the last 15 minutes as CSV</button></p>
       <p class="settings-note" id="hiddenNote" hidden><span id="hiddenCount"></span> <button type="button" class="link unhide">Show them again</button></p>
       <p class="settings-note">Settings are kept for your Windows account. Names and hidden parts are set in the detail panel.</p>
     </section>
@@ -71,6 +73,8 @@
         <span class="key-item" id="keyParts" hidden><span id="keyPartsText"></span> <button type="button" class="link unhide">Show them again</button></span>
       </div>
     </section>
+
+    <section class="list-wrap" id="list" aria-label="Every sensor" hidden></section>
 
     <aside class="rail" id="rail" aria-label="Detail of the selected part">
       <h2 id="railTitle"></h2>

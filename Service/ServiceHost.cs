@@ -103,6 +103,35 @@ internal static class ServiceHost
             return Results.Json(svc.Latest, jsonOptions);
         });
 
+        // The headline numbers only, for the small always-on-top window (every 2 seconds).
+        app.MapGet("/api/summary", (HardwareMonitorService svc) =>
+        {
+            svc.NoteSummaryActivity();
+            var latest = svc.Latest;
+            return Results.Json(new
+            {
+                latest.Timestamp,
+                latest.Ready,
+                latest.Elevated,
+                Cpu = latest.Hardware.FirstOrDefault(h => h.Type == "Cpu")?.Name,
+                latest.Summary,
+            }, jsonOptions);
+        });
+
+        // Every sensor with its last 15 minutes, for the CSV export (asked for by the app).
+        app.MapGet("/api/export", (HardwareMonitorService svc) =>
+        {
+            var latest = svc.Latest;
+            return Results.Json(new
+            {
+                latest.Timestamp,
+                Sensors = latest.Hardware.SelectMany(g => g.Sensors.Select(s => new
+                {
+                    s.Id, Group = g.Name, s.Name, s.Type, s.Unit, History = svc.History(s.Id) ?? [],
+                })),
+            }, jsonOptions);
+        });
+
         // The last 15 minutes of one sensor, for the chart when it shows more than a minute.
         app.MapGet("/api/history", (HttpRequest request, HardwareMonitorService svc) =>
         {

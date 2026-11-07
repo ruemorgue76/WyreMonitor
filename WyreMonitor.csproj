@@ -30,7 +30,7 @@
          WindowsBase version conflict is harmless. -->
     <MSBuildWarningsAsMessages>$(MSBuildWarningsAsMessages);MSB3277</MSBuildWarningsAsMessages>
     <!-- Build outputs live inside the project: never treat them as source. -->
-    <DefaultItemExcludes>$(DefaultItemExcludes);dist\**;publish\**;installer\**</DefaultItemExcludes>
+    <DefaultItemExcludes>$(DefaultItemExcludes);dist\**;publish\**;installer\**;testing\**</DefaultItemExcludes>
   </PropertyGroup>
 
   <ItemGroup>

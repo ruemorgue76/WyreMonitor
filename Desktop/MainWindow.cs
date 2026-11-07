@@ -19,11 +19,13 @@ internal sealed class MainWindow : Form
     private readonly WebView2 _web = new() { Dock = DockStyle.Fill, DefaultBackgroundColor = Background };
     private readonly System.Windows.Forms.Timer _retry = new() { Interval = 3000 };
     private readonly Action<PageSettings> _onPageSettings;
+    private readonly Action _onExport;
     private string? _url;
 
-    public MainWindow(Icon icon, Action<PageSettings> onPageSettings)
+    public MainWindow(Icon icon, Action<PageSettings> onPageSettings, Action onExport)
     {
         _onPageSettings = onPageSettings;
+        _onExport = onExport;
         Text = "WyreMonitor";
         Icon = icon;
         BackColor = Background;
@@ -77,8 +79,9 @@ internal sealed class MainWindow : Form
             settings.AreBrowserAcceleratorKeysEnabled = false;
             settings.IsStatusBarEnabled = false;
             settings.IsZoomControlEnabled = false;
-            // The page sends one kind of message: a copy of its settings for the icon next to
-            // the clock. Accepted only from the service's page, size-checked and validated.
+            // The page sends two kinds of message: a copy of its settings for the icon next to
+            // the clock, and "export" (the CSV). Accepted only from the service's page,
+            // size-checked and validated.
             settings.IsWebMessageEnabled = true;
             settings.IsGeneralAutofillEnabled = false;
             settings.IsPasswordAutosaveEnabled = false;
@@ -96,7 +99,8 @@ internal sealed class MainWindow : Form
                 if (_url is null || !args.Source.StartsWith(_url + "/", StringComparison.OrdinalIgnoreCase)) return;
                 string json;
                 try { json = args.WebMessageAsJson; } catch (ArgumentException) { return; }
-                if (PageSettings.FromMessage(json) is { } page) _onPageSettings(page);
+                if (json == """{"type":"export"}""") _onExport();
+                else if (PageSettings.FromMessage(json) is { } page) _onPageSettings(page);
             };
             core.NewWindowRequested += (_, args) => args.Handled = true;
             core.DownloadStarting += (_, args) => args.Cancel = true;

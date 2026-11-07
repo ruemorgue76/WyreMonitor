@@ -1,6 +1,6 @@
 # Third-party notices
 
-WyreMonitor is released under the MIT License (see `LICENSE`). It includes or uses the
+WyreMonitor is released under the GNU General Public License, version 3 or later (see `LICENSE`). It includes or uses the
 components below, each under its own license.
 
 ## Included in the installer

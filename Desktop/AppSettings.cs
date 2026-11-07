@@ -11,6 +11,12 @@ internal sealed class AppSettings
 {
     public bool TrayTemperature { get; set; }
     public bool Notifications { get; set; }
+    public bool MiniWindow { get; set; }
+    public int? MiniX { get; set; }
+    public int? MiniY { get; set; }
+    public bool AutoUpdateCheck { get; set; }
+    public DateTime LastUpdateCheck { get; set; }
+    public string? AnnouncedVersion { get; set; }   // a new version is announced once
     public PageSettings Page { get; set; } = new();
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web) { WriteIndented = true };

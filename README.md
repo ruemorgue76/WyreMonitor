@@ -10,7 +10,7 @@
 
 <p align="center">
   <a href="../../releases/latest"><img src="https://img.shields.io/github/v/release/ruemorgue76/WyreMonitor?label=Download&style=flat" alt="Download the latest release" /></a>
-  <a href="LICENSE"><img src="https://img.shields.io/github/license/ruemorgue76/WyreMonitor?style=flat" alt="MIT license" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/ruemorgue76/WyreMonitor?style=flat" alt="GPL-3.0 license" /></a>
   <img src="https://img.shields.io/badge/Windows-10%20%7C%2011-0078d4?style=flat" alt="Windows 10 and 11" />
   <a href="../../releases"><img src="https://img.shields.io/github/downloads/ruemorgue76/WyreMonitor/total?style=flat" alt="Downloads" /></a>
 </p>
@@ -52,8 +52,13 @@ part where it sits on the board and answers the question you opened it for:
 - Alert limits you can change, and each kind of alert can be turned off
 - Optional: the CPU temperature on the icon next to the clock, and Windows notifications when
   something needs attention, also with the window closed
+- A list view with every sensor, its current, lowest and highest value
+- A small window that stays on top of the others, with CPU, graphics card and memory
+- Export of the last 15 minutes of every sensor as a CSV file, for a spreadsheet
+- Update check, from the icon's menu or once a day if you turn it on
 - Own window and an icon next to the clock. It starts with Windows and opens without UAC prompts
-- No network access: the page is served only on `127.0.0.1`
+- Nothing leaves your PC: the page is served only on `127.0.0.1`. The only request to the
+  internet is the update check, and only when you ask for it or turn it on
 
 Parts a PC doesn't report are left out of the drawing instead of showing up empty.
 
@@ -126,7 +131,11 @@ a service and use a driver.
 
 **Does it send any data?**
 No. It talks only to your own hardware and serves its page on `127.0.0.1`, which other
-computers cannot reach.
+computers cannot reach. The update check asks GitHub for the latest release, sending nothing
+but the app's name and version; it runs only when you choose *Check for updates* in the icon's
+menu, or once a day if you turn on *Check for updates automatically* (off by default). A new
+version is offered as a link to its download page: WyreMonitor never downloads or runs anything
+by itself.
 
 **A sensor is missing or reads wrong. What can I do?**
 WyreMonitor reads sensors through [LibreHardwareMonitor](https://github.com/LibreHardwareMonitor/LibreHardwareMonitor),
@@ -211,5 +220,10 @@ Security choices:
 
 ## License
 
-MIT, see [LICENSE](LICENSE). Third-party components and their licenses are listed in
+Copyright © 2026 ruemorgue76.
+
+WyreMonitor is free software: you can use, study, share and change it under the terms of the
+[GNU General Public License](LICENSE), version 3 or any later version. If you distribute a
+modified version, it must be under the same license, with its source code. Versions up to 1.3.0
+were released under the MIT License. Third-party components and their licenses are listed in
 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).

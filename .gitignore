@@ -7,3 +7,6 @@ installer/output/
 *.user
 *.suo
 .vs/
+
+# Local test scripts and their output (not part of the app)
+testing/

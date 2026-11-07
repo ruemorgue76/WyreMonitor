@@ -14,7 +14,10 @@ internal sealed class TrayApp : ApplicationContext
     private readonly Icon _icon;
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly TrayMonitor _monitor;
+    private readonly ToolStripMenuItem _miniItem;
+    private readonly System.Windows.Forms.Timer _updateTimer = new() { Interval = 60 * 60 * 1000 };
     private MainWindow? _window;
+    private MiniWindow? _mini;
     private bool _closeHintShown;
 
     public TrayApp(bool showWindow)
@@ -57,6 +60,19 @@ internal sealed class TrayApp : ApplicationContext
             _monitor!.Refresh();
         };
 
+        _miniItem = new ToolStripMenuItem("Small window, always on top") { Checked = _settings.MiniWindow };
+        _miniItem.Click += (_, _) => SetMini(!_miniItem.Checked);
+
+        var checkNow = new ToolStripMenuItem("Check for updates…");
+        checkNow.Click += async (_, _) => await UpdateCheck.CheckAndTellAsync();
+        var autoCheck = new ToolStripMenuItem("Check for updates automatically") { Checked = _settings.AutoUpdateCheck };
+        autoCheck.Click += async (_, _) =>
+        {
+            _settings.AutoUpdateCheck = autoCheck.Checked = !autoCheck.Checked;
+            _settings.Save();
+            if (_settings.AutoUpdateCheck) await AutoCheckAsync();
+        };
+
         var exit = new ToolStripMenuItem("Exit");
         exit.Click += (_, _) => Quit();
 
@@ -65,8 +81,9 @@ internal sealed class TrayApp : ApplicationContext
         var menu = new ContextMenuStrip();
         menu.Items.AddRange(new ToolStripItem[]
         {
-            version, new ToolStripSeparator(), open, new ToolStripSeparator(),
-            autostart, temperature, notifications, new ToolStripSeparator(), exit,
+            version, new ToolStripSeparator(), open, _miniItem, new ToolStripSeparator(),
+            autostart, temperature, notifications, new ToolStripSeparator(),
+            checkNow, autoCheck, new ToolStripSeparator(), exit,
         });
 
         _tray = new NotifyIcon
@@ -87,7 +104,56 @@ internal sealed class TrayApp : ApplicationContext
         _monitor = new TrayMonitor(_tray, _icon, _settings, ShowWindow);
         _monitor.Refresh();
 
+        // Once a day at most, only if the user turned it on; the hourly timer just looks at the date.
+        _updateTimer.Tick += async (_, _) => await AutoCheckAsync();
+        _updateTimer.Start();
+        _ = AutoCheckAsync();
+
+        if (_settings.MiniWindow) SetMini(true);
         if (showWindow) ShowOnUiThread();
+    }
+
+    private void SetMini(bool open)
+    {
+        _settings.MiniWindow = _miniItem.Checked = open;
+        _settings.Save();
+        if (open && _mini is null)
+        {
+            _mini = new MiniWindow(_icon, _settings);
+            _mini.FormClosed += (_, _) =>
+            {
+                _mini = null;
+                // Closed with its own X: it stays closed next time too. Not when quitting the app.
+                if (!_quitting) { _settings.MiniWindow = _miniItem.Checked = false; _settings.Save(); }
+            };
+            _mini.Show();
+        }
+        else if (!open)
+        {
+            _mini?.Close();
+        }
+    }
+
+    private async Task AutoCheckAsync()
+    {
+        if (!_settings.AutoUpdateCheck || DateTime.UtcNow - _settings.LastUpdateCheck < UpdateCheck.Every) return;
+        var result = await UpdateCheck.CheckAsync();
+        if (result.Outcome == UpdateCheck.Outcome.Unavailable) return;   // try again at the next tick
+        _settings.LastUpdateCheck = DateTime.UtcNow;
+        if (result.Outcome == UpdateCheck.Outcome.NewVersion && result.Version != _settings.AnnouncedVersion)
+        {
+            _settings.AnnouncedVersion = result.Version;
+            var page = result.PageUrl!;
+            Toasts.Show($"WyreMonitor {result.Version} is available",
+                $"You have {AppInfo.Version}. Click to open its download page.",
+                () => _uiThread.BeginInvoke(() => UpdateCheck.OpenPage(page)));
+        }
+        _settings.Save();
+    }
+
+    private void Export()
+    {
+        if (_window is not null) _ = Exporter.ExportAsync(_window, _settings.Page);
     }
 
     /// <summary>The page sent its settings: the icon uses them for its temperature and alerts.</summary>
@@ -105,7 +171,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         if (_window is null)
         {
-            _window = new MainWindow(_icon, OnPageSettings);
+            _window = new MainWindow(_icon, OnPageSettings, Export);
             _window.FormClosed += (_, _) =>
             {
                 _window = null;
@@ -122,8 +188,12 @@ internal sealed class TrayApp : ApplicationContext
         _window.Activate();
     }
 
+    private bool _quitting;
+
     private void Quit()
     {
+        _quitting = true;
+        _mini?.Close();
         _closeHintShown = true;
         _window?.Close();
         _tray.Visible = false;
@@ -134,6 +204,7 @@ internal sealed class TrayApp : ApplicationContext
     {
         if (disposing)
         {
+            _updateTimer.Dispose();
             _monitor.Dispose();
             _tray.Dispose();
             _uiThread.Dispose();

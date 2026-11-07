@@ -24,6 +24,7 @@ function loadSettings() {
     fans: saved.fans === "still" ? "still" : "spin",
     rail: saved.rail !== false,                 // detail panel shown
     chart: [300, 900].includes(saved.chart) ? saved.chart : 60,   // seconds shown in the chart
+    view: saved.view === "list" ? "list" : "board",
     names: cleanNames(saved.names),             // sensor id -> name chosen by the user
     hidden: cleanHidden(saved.hidden),          // part names and fan sensor ids left off the board
     alerts: cleanAlerts(saved.alerts),
@@ -371,6 +372,8 @@ const state = {
   verdictKey: "",
   tracesDrawn: false,
   renaming: false,     // the detail panel shows name fields instead of readings
+  listRows: new Map(),  // sensor id -> cells of the list view
+  listKey: "",          // what the list was built from
   longHistory: null,   // { id, values }: the charted sensor over more than a minute
 };
 
@@ -1086,7 +1089,7 @@ async function poll() {
       buildBoard(m);
     }
     // First data, or the selected part disappeared or was hidden: show the CPU, or the first part.
-    if (!onBoard(m, state.selected)) selectFirst(m);
+    if (!selectable(m, state.selected)) selectFirst(m);
 
     // More than a minute in the chart: the service sends the charted sensor's long history.
     if (settings.chart > 60 && state.chartId) {
@@ -1101,6 +1104,7 @@ async function poll() {
     if (state.failed) { state.failed = false; state.verdictKey = ""; document.body.classList.remove("stale"); }
 
     updateBoard(m);
+    updateList(m);
     updateRail();
     updateVerdict(m);
     setText($("fresh"), `Updated at ${new Date(snapshot.timestamp).toLocaleTimeString(LOCALE)}`);
@@ -1118,6 +1122,101 @@ async function poll() {
   }
 }
 
+function selectable(m, name) {
+  if (settings.view === "list") return m.snapshot.hardware.some((h) => h.name === name && shown(h.name));
+  return onBoard(m, name);
+}
+
+// ---- List view: every sensor of every part, like a classic hardware monitor -------------
+// In the order of the board: CPU, graphics, memory, motherboard, drives, then the rest.
+const LIST_ORDER = ["Cpu", "Gpu", "Memory", "Motherboard", "SuperIO", "EmbeddedController", "Storage", "Battery"];
+function listGroups(m) {
+  const rank = (g) => {
+    const i = LIST_ORDER.findIndex((t) => g.type.startsWith(t));
+    return i < 0 ? LIST_ORDER.length : i;
+  };
+  return m.snapshot.hardware
+    .map((g, i) => ({ g, i }))
+    .filter(({ g }) => g.sensors.length && shown(g.name))
+    .sort((a, b) => rank(a.g) - rank(b.g) || a.i - b.i)
+    .map(({ g }) => g);
+}
+
+function buildList(m) {
+  state.listRows.clear();
+  const rank = (t) => { const i = TYPE_ORDER.indexOf(t); return i < 0 ? 99 : i; };
+  $("list").innerHTML = listGroups(m).map((g) => {
+    const sensors = [...g.sensors].sort((a, b) => rank(a.type) - rank(b.type));
+    return `<section class="list-group">
+      <h3>${esc(groupTitle(g))}<small>${esc(groupSubtitle(g, m))}</small></h3>
+      <table>
+        <thead><tr><th scope="col">Sensor</th><th scope="col">Now</th><th scope="col">Min</th><th scope="col">Max</th></tr></thead>
+        <tbody>${sensors.map((s) => `
+          <tr data-group="${esc(g.name)}" data-id="${esc(s.id)}" tabindex="0">
+            <th scope="row" title="${esc(s.name)}">${esc(shownName(s))}</th><td></td><td></td><td></td>
+          </tr>`).join("")}</tbody>
+      </table>
+    </section>`;
+  }).join("");
+  for (const row of $("list").querySelectorAll("tr[data-id]")) {
+    const [now, min, max] = row.querySelectorAll("td");
+    state.listRows.set(row.dataset.id, { row, now, min, max });
+  }
+}
+
+function updateList(m) {
+  if (settings.view !== "list") return;
+  const key = `${state.signature}|${settings.hidden.join()}|${JSON.stringify(settings.names)}`;
+  if (key !== state.listKey) { state.listKey = key; buildList(m); }
+  for (const g of listGroups(m)) {
+    for (const s of g.sensors) {
+      const cells = state.listRows.get(s.id);
+      if (!cells) continue;
+      setText(cells.now, formatValue(s.type, s.value, s.name));
+      setText(cells.min, s.min == null ? "" : formatValue(s.type, s.min, s.name));
+      setText(cells.max, s.max == null ? "" : formatValue(s.type, s.max, s.name));
+      cells.row.setAttribute("aria-selected", String(s.id === state.chartId));
+    }
+  }
+}
+
+function applyView() {
+  const list = settings.view === "list";
+  document.body.classList.toggle("list-view", list);
+  $("list").hidden = !list;
+  setText($("viewToggle"), list ? "Board view" : "List view");
+  $("viewToggle").setAttribute("aria-expanded", String(list));
+  state.listKey = "";
+  if (state.model) {
+    if (!selectable(state.model, state.selected)) selectFirst(state.model);
+    updateList(state.model);
+    requestAnimationFrame(drawTraces);
+  }
+}
+
+$("viewToggle").addEventListener("click", () => {
+  settings.view = settings.view === "list" ? "board" : "list";
+  saveSettings();
+  applyView();
+});
+
+function chooseRow(row) {
+  if (!row) return;
+  select(row.dataset.group, row.dataset.id);
+  updateList(state.model);
+}
+$("list").addEventListener("click", (e) => chooseRow(e.target.closest("tr[data-id]")));
+$("list").addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") { e.preventDefault(); chooseRow(e.target.closest("tr[data-id]")); }
+});
+
+// ---- CSV export: the app saves the file (the window itself can't download) --------------
+$("exportNote").hidden = !window.chrome?.webview;
+$("exportCsv").addEventListener("click", () => {
+  try { window.chrome.webview.postMessage({ type: "export" }); } catch { /* not in the app window */ }
+  openSettings(false);
+});
+
 function selectFirst(m) {
   const first = m.cpu ?? m.gpus[0] ?? m.memory ?? m.drives[0]?.group ?? m.dimms[0] ?? m.boards[0] ?? m.battery ?? null;
   state.selected = first?.name ?? null;
@@ -1133,7 +1232,8 @@ function rebuild() {
   const m = readModel(state.model.snapshot);
   state.model = m;
   buildBoard(m);
-  if (!onBoard(m, state.selected)) selectFirst(m); else renderRail();
+  if (!selectable(m, state.selected)) selectFirst(m); else renderRail();
+  state.listKey = "";
   state.verdictKey = "";
   updateBoard(m);
   updateRail();
@@ -1312,6 +1412,7 @@ document.addEventListener("pointerdown", (e) => {
 });
 
 applyRail();
+applyView();
 mirrorToApp();
 
 poll();

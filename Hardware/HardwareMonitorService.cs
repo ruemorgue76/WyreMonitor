@@ -58,6 +58,15 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
 
     private bool BackgroundActive => Within(ref _lastBackgroundRequest, BackgroundTimeout);
 
+    // The small always-on-top window shows a few numbers: a reading every 2 seconds is enough.
+    private long _lastSummaryRequest;
+    private static readonly TimeSpan SummaryInterval = TimeSpan.FromSeconds(2);
+
+    /// <summary>Called by the small window: sensors are read every 2 seconds while it is open.</summary>
+    public void NoteSummaryActivity() => Interlocked.Exchange(ref _lastSummaryRequest, Environment.TickCount64);
+
+    private bool SummaryActive => Within(ref _lastSummaryRequest, ClientTimeout);
+
     /// <summary>
     /// Called on every page request: while a page is open, sensors are read every second, or
     /// every half second when the page asks for it (<paramref name="fast"/>).
@@ -134,25 +143,37 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
             if (sincePoll >= TimeSpan.FromSeconds(1) - Tolerance) Poll(fast: false);
             return;
         }
+        if (SummaryActive)
+        {
+            if (sincePoll >= SummaryInterval - Tolerance) Poll(fast: false, summaryOnly: true);
+            return;
+        }
         var sinceClient = TimeSpan.FromMilliseconds(Environment.TickCount64 - Interlocked.Read(ref _lastClientRequest));
         if (sinceClient > IdleStop && !BackgroundActive) return;
         if (sincePoll >= IdleInterval - Tolerance) Poll(fast: false);
     }
 
     /// <summary>How often a part is read. Temperatures of drives and memory modules move slowly.</summary>
-    private static TimeSpan IntervalFor(IHardware hw, bool fast) => hw.HardwareType switch
+    private static TimeSpan IntervalFor(IHardware hw, bool fast, bool summaryOnly) => hw.HardwareType switch
     {
+        // Only the small window is open: just what it shows (CPU, graphics, memory) is fresh;
+        // the rest keeps the idle pace, enough for the notifications.
+        _ when summaryOnly && !IsSummaryPart(hw) => IdleInterval,
         HardwareType.Storage => TimeSpan.FromSeconds(10),
         HardwareType.Memory when hw.Name.EndsWith(')') && hw.Name.Contains("(#") => TimeSpan.FromSeconds(5),
         _ => fast ? TimeSpan.FromMilliseconds(500) : TimeSpan.FromSeconds(1),
     };
 
-    private void UpdateHardware(DateTime now, bool fast)
+    private static bool IsSummaryPart(IHardware hw) =>
+        hw.HardwareType is HardwareType.Cpu or HardwareType.GpuNvidia or HardwareType.GpuAmd or HardwareType.GpuIntel
+        || (hw.HardwareType == HardwareType.Memory && !hw.Name.Contains("(#"));
+
+    private void UpdateHardware(DateTime now, bool fast, bool summaryOnly)
     {
         foreach (var hw in _computer.Hardware)
         {
             if (_neverUpdate.Contains(hw)) continue;
-            if (_lastUpdate.TryGetValue(hw, out var last) && now - last < IntervalFor(hw, fast) - Tolerance) continue;
+            if (_lastUpdate.TryGetValue(hw, out var last) && now - last < IntervalFor(hw, fast, summaryOnly) - Tolerance) continue;
 
             hw.Update();
             foreach (var sub in hw.SubHardware) sub.Update();
@@ -167,7 +188,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         }
     }
 
-    private void Poll(bool fast = false)
+    private void Poll(bool fast = false, bool summaryOnly = false)
     {
         // Timer callbacks can overlap on slow hardware; skip if a poll is in flight.
         if (!Monitor.TryEnter(_updateLock)) return;
@@ -190,7 +211,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
                 : (int)Math.Clamp(Math.Floor((now - _lastSample + Tolerance).TotalSeconds), 0, 10);
             if (samples > 0) _lastSample = now;
 
-            UpdateHardware(now, fast);
+            UpdateHardware(now, fast, summaryOnly);
 
             var groups = new List<HardwareGroup>();
             foreach (var hw in _computer.Hardware)
