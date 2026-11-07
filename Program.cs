@@ -121,9 +121,13 @@ internal static class Program
             OnPrepareResponse = ctx => ctx.Context.Response.Headers.CacheControl = "no-cache",
         });
 
-        // The single data endpoint the dashboard polls once per second.
+        // The single data endpoint the dashboard polls once per second. Requests also tell the
+        // service a page is open, so it reads sensors every second instead of every few.
         app.MapGet("/api/sensors", (HardwareMonitorService svc) =>
-            Results.Json(svc.Latest, jsonOptions));
+        {
+            svc.NoteClientActivity();
+            return Results.Json(svc.Latest, jsonOptions);
+        });
 
         // Liveness probe. "app" lets a second launch tell this app from another program on the port.
         app.MapGet("/api/health", (HardwareMonitorService svc) =>

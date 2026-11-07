@@ -43,6 +43,14 @@ internal sealed class MainWindow : Form
 
     private static int ColorRef(Color c) => c.R | (c.G << 8) | (c.B << 16);
 
+    protected override void OnResize(EventArgs e)
+    {
+        base.OnResize(e);
+        // A minimized window hides the page: WebView2 then pauses its animations and slows
+        // its timers, and the sensors go back to their idle pace.
+        _web.Visible = WindowState != FormWindowState.Minimized;
+    }
+
     protected override async void OnShown(EventArgs e)
     {
         base.OnShown(e);

@@ -263,7 +263,6 @@ const state = {
   showSecondary: false,
   lastOk: 0,
   failed: false,
-  rotors: new Map(),
   sensorRows: new Map(),
   verdictKey: "",
   tracesDrawn: false,
@@ -283,7 +282,15 @@ const ROTOR = `<span class="rotor" aria-hidden="true"><svg viewBox="0 0 40 40">
     <path d="M20 20c-7 3-14 2-17-4 5-3 12-1 17 4z"/>
   </g>
   <circle cx="20" cy="20" r="4" fill="#141a1a" stroke="currentColor"/>
-</svg></span>`;
+</svg><img class="spin" src="/fan-spin.png" alt="" /></span>`;
+
+// A spinning fan shows an animated image at a fixed speed; a stopped one shows the still icon.
+// An image redraws only its own few pixels, 12 times a second: a CSS or script animation made
+// the whole window redraw 60 times a second and tripled the app's CPU use.
+function setFanIcon(holder, rpm) {
+  holder?.querySelector(".rotor")?.classList.toggle("spinning", rpm > 0 && !REDUCED_MOTION);
+  holder?.classList.toggle("off", rpm <= 0);
+}
 
 function buildDie(die) {
   // Cores fill the die in one, two or three rows, depending on how many there are.
@@ -429,20 +436,8 @@ function buildBoard(m) {
       ${sata.length ? `<div class="store-row sata-row">${sata.map(([d, i]) => buildDrive(d, i)).join("")}</div>` : ""}
     </div>` : ""}`;
 
-  // Rotors: the animation speed follows the real RPM.
-  state.rotors.clear();
-  if (!REDUCED_MOTION) {
-    for (const el of board.querySelectorAll("[data-fan], [data-gpufan]")) {
-      const id = el.dataset.fan ?? el.dataset.gpufan;
-      const spin = el.querySelector(".blades").animate(
-        [{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }],
-        { duration: 1000, iterations: Infinity },
-      );
-      spin.playbackRate = 0;
-      state.rotors.set(id, spin);
-    }
-  }
-
+  // The fan icons stay still on purpose: spinning them made the window redraw 60 times a
+  // second and tripled the app's CPU use. The RPM is written next to each one.
   drawTraces();
 }
 
@@ -517,12 +512,6 @@ function bar(el, fraction) {
   if (el) el.style.transform = `scaleX(${Math.max(0, Math.min(1, fraction))})`;
 }
 
-function setRotor(id, rpm) {
-  const spin = state.rotors.get(id);
-  // Real revolutions divided by 3000: slow enough to watch, proportional to each other.
-  if (spin) spin.playbackRate = rpm / 60 / 50;
-}
-
 function updateBoard(m) {
   const s = m.snapshot.summary;
   const board = $("board");
@@ -569,16 +558,15 @@ function updateBoard(m) {
     const hotEl = q("hot");
     setText(hotEl, r.hot == null ? "n/a" : `${fixed(r.hot)} °C`);
     if (hotEl && r.hot != null) hotEl.style.color = heat(r.hot, LIMITS.gpuHot.warn);
-    for (const f of r.fans) setRotor(f.id, f.value);
+    for (const f of r.fans) setFanIcon(el.querySelector(`[data-gpufan="${CSS.escape(f.id)}"]`), f.value);
   }
 
   for (const f of m.fans) {
     const el = board.querySelector(`[data-fan="${CSS.escape(f.sensor.id)}"]`);
     if (!el) continue;
     const on = f.sensor.value > 0;
-    el.classList.toggle("off", !on);
+    setFanIcon(el, f.sensor.value);
     setText(el.querySelector(".val"), on ? `${fixed(f.sensor.value)} RPM` : "Stopped");
-    setRotor(f.sensor.id, f.sensor.value);
   }
 
   for (const g of m.dimms) {

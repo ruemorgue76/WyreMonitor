@@ -15,16 +15,32 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
 {
     private readonly ILogger<HardwareMonitorService> _log;
     private readonly Computer _computer;
-    private readonly UpdateVisitor _visitor = new();
     private readonly object _updateLock = new();
     private Timer? _timer;
 
-    // Rolling history per sensor id, for the dashboard sparklines.
+    // Rolling history per sensor id: one sample per second, the last 60 seconds.
     private readonly ConcurrentDictionary<string, RingBuffer> _history = new();
 
     private volatile Snapshot _latest = Snapshot.Empty;
     private string? _systemDrive;
+
+    // Reading every sensor takes a few hundred milliseconds on a big machine, mostly in parts
+    // whose values change slowly. Each part is read at its own pace (see IntervalFor), and
+    // everything slows down while no window shows the page.
+    private static readonly TimeSpan IdleInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan ClientTimeout = TimeSpan.FromSeconds(10);
+    private readonly Dictionary<IHardware, DateTime> _lastUpdate = new();
+    private readonly HashSet<IHardware> _neverUpdate = new();
+    private DateTime _lastPoll = DateTime.MinValue;
+    private long _lastClientRequest;   // Environment.TickCount64 of the page's last request
+
     public Snapshot Latest => _latest;
+
+    /// <summary>Called on every page request: while a page is open, sensors are read every second.</summary>
+    public void NoteClientActivity() => Interlocked.Exchange(ref _lastClientRequest, Environment.TickCount64);
+
+    private bool ClientActive =>
+        Environment.TickCount64 - Interlocked.Read(ref _lastClientRequest) < ClientTimeout.TotalMilliseconds;
 
     public bool IsElevated { get; }
 
@@ -60,7 +76,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
                 _systemDrive = FindSystemDriveModel();
                 _computer.Open();
                 Poll();
-                _timer = new Timer(_ => Poll(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
+                _timer = new Timer(_ => Tick(), null, TimeSpan.FromSeconds(1), TimeSpan.FromSeconds(1));
             }
             catch (Exception ex)
             {
@@ -70,20 +86,61 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         return Task.CompletedTask;
     }
 
+    /// <summary>Every second while a page is open, every IdleInterval otherwise.</summary>
+    private void Tick()
+    {
+        if (!ClientActive && DateTime.UtcNow - _lastPoll < IdleInterval - TimeSpan.FromMilliseconds(100)) return;
+        Poll();
+    }
+
+    /// <summary>How often a part is read. Temperatures of drives and memory modules move slowly.</summary>
+    private static TimeSpan IntervalFor(IHardware hw) => hw.HardwareType switch
+    {
+        HardwareType.Storage => TimeSpan.FromSeconds(10),
+        HardwareType.Memory when hw.Name.EndsWith(')') && hw.Name.Contains("(#") => TimeSpan.FromSeconds(5),
+        _ => TimeSpan.FromSeconds(1),
+    };
+
+    private void UpdateHardware(DateTime now)
+    {
+        foreach (var hw in _computer.Hardware)
+        {
+            if (_neverUpdate.Contains(hw)) continue;
+            if (_lastUpdate.TryGetValue(hw, out var last) && now - last < IntervalFor(hw) - TimeSpan.FromMilliseconds(100)) continue;
+
+            hw.Update();
+            foreach (var sub in hw.SubHardware) sub.Update();
+            _lastUpdate[hw] = now;
+
+            // Empty card readers report a total space of 0: reading them again is wasted time.
+            if (hw.HardwareType == HardwareType.Storage &&
+                hw.Sensors.Any(s => s.SensorType == SensorType.Data && s.Name == "Total Space" && (s.Value ?? 0) == 0))
+            {
+                _neverUpdate.Add(hw);
+            }
+        }
+    }
+
     private void Poll()
     {
         // Timer callbacks can overlap on slow hardware; skip if a poll is in flight.
         if (!Monitor.TryEnter(_updateLock)) return;
         try
         {
-            _computer.Accept(_visitor);
+            var now = DateTime.UtcNow;
+            // The history holds one sample per second: after a slow (idle) poll, the value is
+            // repeated for the seconds that passed, so the chart's time axis stays true.
+            var samples = _lastPoll == DateTime.MinValue ? 1 : (int)Math.Clamp(Math.Round((now - _lastPoll).TotalSeconds), 1, 10);
+            _lastPoll = now;
+
+            UpdateHardware(now);
 
             var groups = new List<HardwareGroup>();
             foreach (var hw in _computer.Hardware)
             {
-                groups.Add(BuildGroup(hw));
+                groups.Add(BuildGroup(hw, samples));
                 foreach (var sub in hw.SubHardware)
-                    groups.Add(BuildGroup(sub, parent: hw.Name));
+                    groups.Add(BuildGroup(sub, samples, parent: hw.Name));
             }
 
             _latest = new Snapshot(
@@ -104,7 +161,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         }
     }
 
-    private HardwareGroup BuildGroup(IHardware hw, string? parent = null)
+    private HardwareGroup BuildGroup(IHardware hw, int samples, string? parent = null)
     {
         var sensors = new List<SensorReading>();
         foreach (var s in hw.Sensors)
@@ -120,7 +177,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
                 Value: value,
                 Min: s.Min is { } mn ? Math.Round(mn, 2) : null,
                 Max: s.Max is { } mx ? Math.Round(mx, 2) : null,
-                History: PushHistory(s.Identifier.ToString(), value));
+                History: PushHistory(s.Identifier.ToString(), value, samples));
             sensors.Add(reading);
         }
 
@@ -128,10 +185,10 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         return new HardwareGroup(name, hw.HardwareType.ToString(), sensors);
     }
 
-    private double[] PushHistory(string id, double value)
+    private double[] PushHistory(string id, double value, int samples)
     {
         var buffer = _history.GetOrAdd(id, _ => new RingBuffer(60));
-        buffer.Add(value);
+        for (var i = 0; i < samples; i++) buffer.Add(value);
         return buffer.ToArray();
     }
 
@@ -289,18 +346,5 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     {
         _timer?.Dispose();
         try { _computer.Close(); } catch { /* driver may already be unloaded */ }
-    }
-
-    /// <summary>Walks the hardware tree and refreshes each node's sensor values.</summary>
-    private sealed class UpdateVisitor : IVisitor
-    {
-        public void VisitComputer(IComputer computer) => computer.Traverse(this);
-        public void VisitHardware(IHardware hardware)
-        {
-            hardware.Update();
-            foreach (var sub in hardware.SubHardware) sub.Accept(this);
-        }
-        public void VisitSensor(ISensor sensor) { }
-        public void VisitParameter(IParameter parameter) { }
     }
 }

@@ -190,7 +190,13 @@ body.stale .rail { opacity: .45; }
 .fan .val { display: block; font-size: 14px; font-weight: 700; white-space: nowrap; }
 .fan.off .val { font-weight: 400; color: var(--silk-dim); }
 .rotor { display: block; width: 34px; height: 34px; color: var(--silk-dim); }
+[data-gpufan].off .rotor { opacity: .4; }
 .rotor svg { display: block; width: 100%; height: 100%; }
+/* Spinning: the animated image (wwwroot/fan-spin.png) replaces the still icon. */
+.rotor .spin { display: none; width: 100%; height: 100%; }
+.rotor.spinning svg { display: none; }
+.rotor.spinning .spin { display: block; }
+[data-gpufan].off .rotor { opacity: .4; }
 .rotor .blades { transform-origin: 50% 50%; transform-box: fill-box; }
 
 /* ---------- RAM ---------- */
@@ -260,7 +266,7 @@ body.stale .rail { opacity: .45; }
   background: var(--gold);
   transform: scaleY(0);
   transform-origin: bottom;
-  transition: transform .4s linear;
+  /* No transition: animating dozens of bars every second costs more than it shows. */
 }
 .iod {
   display: flex;
@@ -308,7 +314,7 @@ body.stale .rail { opacity: .45; }
 .stat-cell .designator { font-size: 12px; }
 .stat-cell b { font-size: 16px; font-weight: 700; white-space: nowrap; }
 .meter { display: block; height: 5px; background: var(--gold-dim); margin-top: 3px; overflow: hidden; }
-.meter i { display: block; height: 100%; width: 100%; background: var(--gold); transform: scaleX(0); transform-origin: left; transition: transform .4s linear; }
+.meter i { display: block; height: 100%; width: 100%; background: var(--gold); transform: scaleX(0); transform-origin: left; }
 
 /* ---------- Side column: memory, battery, board probes ---------- */
 .side {
@@ -445,6 +451,3 @@ body.stale .rail { opacity: .45; }
   .m2-row, .sata-row { grid-template-columns: minmax(0, 1fr); }
 }
 
-@media (prefers-reduced-motion: reduce) {
-  .th i, .meter i { transition: none; }
-}
