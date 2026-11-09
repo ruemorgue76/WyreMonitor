@@ -23,6 +23,9 @@ AppId={{7B0F4E32-6A1C-4D58-9E27-3C1A8F5D2B64}
 AppName=WyreMonitor
 AppVersion={#AppVersion}
 AppVerName=WyreMonitor {#AppVersion}
+; Shown as the publisher in Windows' installed apps, and matched by winget.
+AppPublisher=ruemorgue76
+AppPublisherURL=https://github.com/ruemorgue76/WyreMonitor
 DefaultDirName={autopf}\WyreMonitor
 DisableDirPage=yes
 ; An earlier install in another folder must not be reused: see PrepareToInstall.
