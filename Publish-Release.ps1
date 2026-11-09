@@ -7,6 +7,7 @@
       3. tags the commit v1.1.0, with the release notes in the tag's message, and pushes both
       4. GitHub Actions (.github/workflows/release.yml) then builds the installer on GitHub's
          machines and creates the release: nothing published is built on this PC
+         (with code signing set up, approve the two signing requests on SignPath: docs\signpath)
 
     Without -Notes, the release notes list the commits since the previous version.
     Needs GitHub CLI signed in: winget install --id GitHub.cli -e, then gh auth login

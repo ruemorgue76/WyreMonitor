@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- SignPath artifact configuration "app": the app's own files, signed before they are packaged.
+     The workflow uploads them as a ZIP (WyreMonitor.exe and WyreMonitor.dll at its root).
+     Only these two files are signed: the .NET runtime and other projects' libraries are not. -->
+<artifact-configuration xmlns="http://signpath.io/artifact-configuration/v1">
+  <parameters>
+    <parameter name="version" required="true" />
+  </parameters>
+  <zip-file>
+    <pe-file-set product-name="WyreMonitor" product-version="${version}">
+      <include path="WyreMonitor.exe" />
+      <include path="WyreMonitor.dll" />
+      <for-each>
+        <authenticode-sign />
+      </for-each>
+    </pe-file-set>
+  </zip-file>
+</artifact-configuration>
