@@ -227,28 +227,25 @@ Security choices:
 
 ## Code signing policy
 
-Free code signing provided by [SignPath.io](https://signpath.io), certificate by
-[SignPath Foundation](https://signpath.org).
-
-Signing starts with the first release after SignPath Foundation accepts the project; until then
-the installer is not signed, and its release notes say so.
+The installer is not code-signed yet. To check that a download is genuine, compare its SHA-256
+with the one in the release notes (see *Install*).
 
 Every installer on the [releases page](../../releases) is built by GitHub Actions from the code in
 this repository, with the steps in [`.github/workflows/release.yml`](.github/workflows/release.yml):
 the commit, the build script and the build log are public. Nothing published is built on a
 personal PC. Each release lists the installer's SHA-256.
 
-What is signed: only files built from this repository, `WyreMonitor.exe`, `WyreMonitor.dll` and
-the installer `WyreMonitor-Setup-<version>.exe` ([artifact configurations](docs/signpath)). The
-.NET runtime, the libraries of other projects and the PawnIO driver keep their authors' own
-signatures.
+The release workflow is ready to sign through [SignPath](https://signpath.io) once the project
+has a code signing certificate ([setup](docs/signpath)). It would sign only files built from this
+repository: `WyreMonitor.exe`, `WyreMonitor.dll` and the installer. The .NET runtime, the
+libraries of other projects and the PawnIO driver keep their authors' own signatures.
 
-Team roles. WyreMonitor has one maintainer, who holds every role and signs in to GitHub and
-SignPath with multi-factor authentication:
+Team roles. WyreMonitor has one maintainer, who holds every role and signs in to GitHub with
+multi-factor authentication:
 
 - Committers and reviewers: [ruemorgue76](https://github.com/ruemorgue76). Changes proposed by
   anyone else (pull requests) are reviewed before they are merged.
-- Approvers (who approve each signing request): [ruemorgue76](https://github.com/ruemorgue76)
+- Approvers (who approve each release): [ruemorgue76](https://github.com/ruemorgue76)
 
 Privacy: this program will not transfer any information to other networked systems unless
 specifically requested by the user or the person installing or operating it. In practice that

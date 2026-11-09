@@ -1,8 +1,10 @@
 # Code signing with SignPath
 
-WyreMonitor's releases are signed through [SignPath Foundation](https://signpath.org), which
-gives open source projects a free certificate. The policy is in the main
-[README](../../README.md#code-signing-policy); this page is the maintainer's setup.
+WyreMonitor's releases are not signed yet. The release workflow is ready to sign them through
+SignPath, for example with a free certificate from [SignPath Foundation](https://signpath.org),
+which accepts open source projects once they have broad public visibility (a first application,
+in November 2026, was declined for that reason; it can be made again later). The policy is in
+the main [README](../../README.md#code-signing-policy); this page is the maintainer's setup.
 
 ## Files here
 
@@ -14,7 +16,7 @@ gives open source projects a free certificate. The policy is in the main
 Both check that each file's product name is `WyreMonitor` and its product version is the
 release's version, as SignPath Foundation requires.
 
-## Setup, once the project is accepted
+## Setup, once there is a certificate
 
 1. In SignPath, in the project (slug `WyreMonitor`):
    - add the trusted build system **GitHub.com** and link it to the project;
