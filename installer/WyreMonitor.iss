@@ -38,6 +38,8 @@ OutputBaseFilename=WyreMonitor-Setup-{#AppVersion}
 VersionInfoVersion={#AppVersion}
 VersionInfoProductName=WyreMonitor
 VersionInfoProductVersion={#AppVersion}
+VersionInfoProductTextVersion={#AppVersion}
+VersionInfoTextVersion={#AppVersion}
 VersionInfoDescription=WyreMonitor Setup
 ; Before installing: what the setup changes on the PC (a service with system rights, a driver).
 InfoBeforeFile=before-install.txt
