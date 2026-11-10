@@ -66,6 +66,9 @@ Name: "desktopicon"; Description: "Create a desktop shortcut"
 ; The page's files are replaced as a whole on every update: files a newer version dropped
 ; (an old image, say) must not stay behind and keep being served.
 Type: filesandordirs; Name: "{app}\wwwroot"
+; Configuration files of versions up to 1.5.3: the service sets everything in code now.
+Type: files; Name: "{app}\appsettings.json"
+Type: files; Name: "{app}\appsettings.Development.json"
 
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
