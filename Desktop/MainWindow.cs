@@ -125,6 +125,17 @@ internal sealed class MainWindow : Form
             };
             core.NewWindowRequested += (_, args) => args.Handled = true;
             core.DownloadStarting += (_, args) => args.Cancel = true;
+            // The page needs no camera, microphone, location, clipboard or notifications.
+            core.PermissionRequested += (_, args) => args.State = CoreWebView2PermissionState.Deny;
+
+            // The service stopped or moved to another port, or the page's process crashed: show
+            // the waiting message and look for the service again instead of a blank window.
+            core.NavigationCompleted += (_, args) =>
+            {
+                if (!args.IsSuccess && _url is not null && args.WebErrorStatus != CoreWebView2WebErrorStatus.OperationCanceled)
+                    Reconnect();
+            };
+            core.ProcessFailed += (_, _) => Reconnect();
 
             await ConnectAsync();
         }
@@ -136,13 +147,26 @@ internal sealed class MainWindow : Form
                 "WyreMonitor", MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         }
-        catch (Exception ex) when (!IsDisposed)
+        catch (Exception) when (IsDisposed)
+        {
+            // Closed while the browser was still starting (switched to the small window, say).
+        }
+        catch (Exception ex)
         {
             AppInfo.LogError(ex);
             MessageBox.Show(this, $"The window could not open.\n\n{ex.Message}", "WyreMonitor",
                 MessageBoxButtons.OK, MessageBoxIcon.Error);
             Close();
         }
+    }
+
+    private void Reconnect()
+    {
+        if (IsDisposed || _web.CoreWebView2 is null) return;
+        _url = null;
+        try { _web.CoreWebView2.NavigateToString(ServiceMissingPage(_theme)); }
+        catch (Exception ex) { AppInfo.LogError(ex); }   // the browser process itself may be gone
+        _retry.Start();
     }
 
     /// <summary>Shows the page, or a message while the service is not running yet.</summary>

@@ -40,8 +40,9 @@ internal static class UpdateCheck
             if (body.Length > 512 * 1024) return new(Outcome.Unavailable);
             return Evaluate(body, AppInfo.Version);
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or JsonException)
+        catch (Exception)
         {
+            // Network, timeout or an unexpected answer: never crash the app over an update check.
             return new(Outcome.Unavailable);
         }
     }
@@ -51,10 +52,12 @@ internal static class UpdateCheck
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
-        var tag = root.TryGetProperty("tag_name", out var t) ? t.GetString() ?? "" : "";
-        var page = root.TryGetProperty("html_url", out var u) ? u.GetString() ?? "" : "";
-        if (!Version.TryParse(tag.TrimStart('v', 'V'), out var latest) || !Version.TryParse(current, out var running))
+        var tag = root.TryGetProperty("tag_name", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString() ?? "" : "";
+        var page = root.TryGetProperty("html_url", out var u) && u.ValueKind == JsonValueKind.String ? u.GetString() ?? "" : "";
+        if (!Version.TryParse(tag.TrimStart('v', 'V'), out var parsed) || !Version.TryParse(current, out var running))
             return new(Outcome.Unavailable);
+        // Three parts, so that "v2.0" compares and prints as 2.0.0.
+        var latest = new Version(parsed.Major, parsed.Minor, Math.Max(parsed.Build, 0));
         // Only this repository's pages are ever opened.
         if (!page.StartsWith(RepoUrl + "/releases/", StringComparison.Ordinal)) page = RepoUrl + "/releases/latest";
         return latest > running ? new(Outcome.NewVersion, latest.ToString(3), page) : new(Outcome.UpToDate, latest.ToString(3));

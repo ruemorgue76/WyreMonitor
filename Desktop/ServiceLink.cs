@@ -25,11 +25,16 @@ internal static class ServiceLink
     {
         try
         {
-            using var key = Registry.LocalMachine.OpenSubKey(AppInfo.RegistryKey);
-            if (key?.GetValue(AppInfo.PortValue) is not int port || port < 1 || port > 65535) return null;
-
-            var servicePid = ServiceProcessId();
-            if (servicePid is null || NativeMethods.ListeningProcess(port) != servicePid) return null;
+            // Registry, WMI and the TCP table can be slow (WMI at sign-in especially): off the UI
+            // thread, which calls this every few seconds while the service isn't up.
+            var port = await Task.Run<int?>(() =>
+            {
+                using var key = Registry.LocalMachine.OpenSubKey(AppInfo.RegistryKey);
+                if (key?.GetValue(AppInfo.PortValue) is not int p || p < 1 || p > 65535) return null;
+                var servicePid = ServiceProcessId();
+                return servicePid is not null && NativeMethods.ListeningProcess(p) == servicePid ? p : null;
+            });
+            if (port is null) return null;
 
             var url = $"http://127.0.0.1:{port}";
             using var doc = JsonDocument.Parse(await Http.GetStringAsync($"{url}/api/health"));
@@ -49,7 +54,8 @@ internal static class ServiceLink
     {
         using var searcher = new ManagementObjectSearcher(
             $"SELECT ProcessId, State FROM Win32_Service WHERE Name = '{AppInfo.ServiceName}'");
-        foreach (var service in searcher.Get().Cast<ManagementObject>())
+        using var results = searcher.Get();
+        foreach (var service in results.Cast<ManagementObject>())
         {
             using (service)
             {
