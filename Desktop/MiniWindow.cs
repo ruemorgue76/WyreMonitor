@@ -119,6 +119,7 @@ internal sealed class MiniWindow : Form
     public void ApplyTheme()
     {
         BackColor = Background;
+        Icon = AppIcon.For(_settings.Page.Theme);
         _shown = "";
         Invalidate();
     }

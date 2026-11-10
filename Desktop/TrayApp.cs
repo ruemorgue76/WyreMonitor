@@ -11,7 +11,6 @@ internal sealed class TrayApp : ApplicationContext
 {
     private readonly NotifyIcon _tray;
     private readonly Control _uiThread = new();
-    private readonly Icon _icon;
     private readonly AppSettings _settings = AppSettings.Load();
     private readonly TrayMonitor _monitor;
     private readonly ToolStripMenuItem _miniItem;
@@ -23,7 +22,6 @@ internal sealed class TrayApp : ApplicationContext
     public TrayApp(bool showWindow, bool showMini = false)
     {
         _ = _uiThread.Handle;   // forces creation, so BeginInvoke works from other threads
-        _icon = Icon.ExtractAssociatedIcon(Environment.ProcessPath!) ?? SystemIcons.Application;
 
         var open = new ToolStripMenuItem("Open WyreMonitor") { Font = new Font(SystemFonts.MenuFont!, FontStyle.Bold) };
         open.Click += (_, _) => ShowOnUiThread();
@@ -98,7 +96,7 @@ internal sealed class TrayApp : ApplicationContext
 
         _tray = new NotifyIcon
         {
-            Icon = _icon,
+            Icon = CurrentIcon,
             Text = $"WyreMonitor {AppInfo.Version}",
             ContextMenuStrip = menu,
             Visible = true,
@@ -111,7 +109,7 @@ internal sealed class TrayApp : ApplicationContext
         // A click on a notification opens the window.
         _tray.BalloonTipClicked += (_, _) => ShowOnUiThread();
 
-        _monitor = new TrayMonitor(_tray, _icon, _settings, ShowWindow);
+        _monitor = new TrayMonitor(_tray, () => CurrentIcon, _settings, ShowWindow);
         _monitor.Refresh();
 
         // Once a day at most, only if the user turned it on; the hourly timer just looks at the date.
@@ -123,6 +121,9 @@ internal sealed class TrayApp : ApplicationContext
         else if (_settings.MiniWindow) SetMini(true);
         if (showWindow) ShowOnUiThread();
     }
+
+    /// <summary>The app icon in the board theme's colours (see <see cref="AppIcon"/>).</summary>
+    private Icon CurrentIcon => AppIcon.For(_settings.Page.Theme);
 
     private void SetMini(bool open)
     {
@@ -138,7 +139,7 @@ internal sealed class TrayApp : ApplicationContext
         // One place at a time shows the readings: the small window replaces the main one.
         CloseMainForSwitch();
         if (_mini is not null) { _mini.Activate(); return; }
-        _mini = new MiniWindow(_icon, _settings, ShowWindow, remember);
+        _mini = new MiniWindow(CurrentIcon, _settings, ShowWindow, remember);
         _mini.FormClosed += (_, _) =>
         {
             _mini = null;
@@ -209,7 +210,7 @@ internal sealed class TrayApp : ApplicationContext
         {
             // The main window replaces the small one; closing it later leaves just the icon.
             if (_mini is not null) SetMini(false);
-            _window = new MainWindow(_icon, OnPageSettings, Export, SwitchToMini, _settings.Page.Theme);
+            _window = new MainWindow(CurrentIcon, OnPageSettings, Export, SwitchToMini, _settings.Page.Theme);
             _window.FormClosed += (_, _) =>
             {
                 _window = null;

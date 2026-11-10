@@ -45,6 +45,7 @@ internal sealed class MainWindow : Form
     protected override void OnHandleCreated(EventArgs e)
     {
         base.OnHandleCreated(e);
+        TaskbarButton.Apply(Handle);
         PaintTitleBar();
     }
 
@@ -55,6 +56,7 @@ internal sealed class MainWindow : Form
         if (next == _theme) return;
         _theme = next;
         BackColor = _web.DefaultBackgroundColor = _theme.Page;
+        Icon = AppIcon.For(theme);
         PaintTitleBar();
     }
 

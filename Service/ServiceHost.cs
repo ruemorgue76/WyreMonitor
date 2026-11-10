@@ -65,6 +65,17 @@ internal static class ServiceHost
 
         app.Use(async (context, next) =>
         {
+            // Browsers say where a request comes from, and a page can't change it. Only the
+            // service's own page ("same-origin") and an address typed or opened directly ("none")
+            // get through; a web site can't even make the service read its sensors faster.
+            // The app's own requests send no such header and pass too.
+            var site = context.Request.Headers["Sec-Fetch-Site"].ToString();
+            if (site.Length > 0 && site is not ("same-origin" or "none"))
+            {
+                context.Response.StatusCode = StatusCodes.Status403Forbidden;
+                return;
+            }
+
             var headers = context.Response.Headers;
             headers.ContentSecurityPolicy = ContentSecurityPolicy;
             headers.XContentTypeOptions = "nosniff";

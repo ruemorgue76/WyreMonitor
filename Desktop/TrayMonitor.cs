@@ -36,7 +36,7 @@ internal sealed class TrayMonitor : IDisposable
     };
 
     private readonly NotifyIcon _tray;
-    private readonly Icon _appIcon;
+    private readonly Func<Icon> _appIcon;   // the plain icon, in the current theme
     private readonly AppSettings _settings;
     private readonly Action _openWindow;
     private readonly System.Windows.Forms.Timer _timer = new() { Interval = 1000 };
@@ -49,7 +49,7 @@ internal sealed class TrayMonitor : IDisposable
     private Icon? _numberIcon;
     private string _iconKey = "";
 
-    public TrayMonitor(NotifyIcon tray, Icon appIcon, AppSettings settings, Action openWindow)
+    public TrayMonitor(NotifyIcon tray, Func<Icon> appIcon, AppSettings settings, Action openWindow)
     {
         _openWindow = openWindow;
         _tray = tray;
@@ -184,8 +184,8 @@ internal sealed class TrayMonitor : IDisposable
     private void ShowAppIcon(string tooltip)
     {
         _tray.Text = Truncate(tooltip);
+        _tray.Icon = _appIcon();   // also when the theme changed
         if (_numberIcon is null) return;
-        _tray.Icon = _appIcon;
         _numberIcon.Dispose();
         _numberIcon = null;
         _iconKey = "";
