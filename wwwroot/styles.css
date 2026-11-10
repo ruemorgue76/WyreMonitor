@@ -1007,3 +1007,33 @@ body[data-theme="white"] .part.cpu .screw { --mask: #e4e8e1; }
    its die next to the readings rather than floating in the middle. */
 .cpu.single { min-height: 0; }
 .cpu.single .die-col { align-items: flex-start; }
+
+/* ---- 1.5.4: every fan header is drawn as a fan ------------------------------------------------
+   The board shows only what the sensors read now. 0 RPM can be a fan standing still or an empty
+   header, and the reading can't tell them apart: both are drawn as a fan at rest, a part like
+   the others, with quieter blades and number. "Stopped" (red) is for the fans the user asked to
+   keep an eye on. */
+.fan.off { background: var(--epoxy); outline: none; box-shadow: none; }
+.fan.off .rotor { opacity: .5; }
+.fan.off .val { color: var(--silk-dim); font-weight: 400; }
+body[data-theme="white"] .fan.off { --silk: #f0f1e4; --silk-dim: #aab8b1; }
+body.hc .fan.off .val { color: var(--silk); }
+
+/* "Alert me if this fan stops", in the detail panel of a fan. */
+.fan-watch { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 2px 8px; align-items: start; margin-top: 10px; }
+.fan-watch[hidden] { display: none; }
+.fan-watch input { margin: 3px 0 0; accent-color: var(--silk); }
+.fan-watch small { grid-column: 2; color: var(--silk-dim); font-size: 12px; line-height: 1.4; }
+/* A watched fan at 0 RPM: the red outline and number win over the quiet look above. */
+.fan.off.alarm { outline: 1px solid var(--alert); outline-offset: -1px; }
+.fan.off.alarm .val { color: var(--alert); font-weight: 700; }
+
+/* "Is anything connected here?": the clues for a fan reading 0 RPM (docs/design/fans.md). */
+.fan-clues { margin-top: 12px; padding: 10px 12px 12px; border: 1px solid var(--silk-line); border-radius: 3px; font-size: 13px; line-height: 1.45; }
+.fan-clues[hidden] { display: none; }
+.fan-clues-title { font-weight: 700; }
+.fan-clues-why { color: var(--silk-dim); margin-top: 2px; }
+.fan-clues ul { margin: 8px 0 0; padding-left: 16px; display: grid; gap: 5px; }
+.fan-clues li[hidden] { display: none; }
+.fan-clues li:nth-child(n+3) { color: var(--silk-dim); }
+.fan-clues .link { margin-top: 10px; }

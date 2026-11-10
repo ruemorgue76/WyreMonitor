@@ -15,10 +15,10 @@ internal static partial class AlertRules
     public sealed record Reading(bool Ready, bool Elevated, double? CpuTemp, string? SystemDrive, List<Group> Hardware);
     public sealed record Alert(string Key, int Severity, string Title, string Detail);
 
-    /// <summary>Fans seen spinning, and how many checks in a row each one read 0 RPM.</summary>
+    /// <summary>How many checks in a row each fan read 0 RPM.</summary>
     public sealed class FanWatch
     {
-        internal readonly Dictionary<string, (bool Spun, int Zeros)> State = new();
+        internal readonly Dictionary<string, int> Zeros = new();
     }
 
     private static readonly Limit CpuAmd = new(90, 95);
@@ -154,12 +154,13 @@ internal static partial class AlertRules
             for (var i = 0; i < fans.Count; i++)
             {
                 var f = fans[i];
-                fanWatch.State.TryGetValue(f.Id, out var st);
-                st = (st.Spun || f.Value > 200, f.Value <= 0 ? st.Zeros + 1 : 0);
-                fanWatch.State[f.Id] = st;
-                if (!on.Fans || !Shown(f.Id) || !st.Spun || st.Zeros < 2) continue;
+                // Only fans the user asked to keep an eye on: 0 RPM can't tell a stopped fan from an
+                // empty header. Two checks in a row: one odd reading is not a stop.
+                var zeros = f.Value <= 0 ? fanWatch.Zeros.GetValueOrDefault(f.Id) + 1 : 0;
+                fanWatch.Zeros[f.Id] = zeros;
+                if (!on.Fans || !Shown(f.Id) || !page.WatchFans.Contains(f.Id) || zeros < 2) continue;
                 var name = page.Names.TryGetValue(f.Id, out var custom) ? custom : $"Fan {(char)('A' + c)}{i + 1}";
-                alerts.Add(new($"fan:{f.Id}", 2, $"{name} stopped", "It was spinning a moment ago. Check its cable and that nothing blocks it."));
+                alerts.Add(new($"fan:{f.Id}", 2, $"{name} stopped", "It reads 0 RPM. Check its cable and that nothing blocks it."));
             }
         }
         return alerts.OrderByDescending(a => a.Severity).ToList();

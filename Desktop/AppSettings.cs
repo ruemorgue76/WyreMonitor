@@ -97,6 +97,8 @@ internal sealed class PageSettings
     public string Palette { get; set; } = "standard";
     public Dictionary<string, string> Names { get; set; } = new();
     public List<string> Hidden { get; set; } = new();
+    /// <summary>Fans the user wants an alert for when they read 0 RPM.</summary>
+    public List<string> WatchFans { get; set; } = new();
     public AlertSettings Alerts { get; set; } = new();
 
     private static readonly JsonSerializerOptions Json = new(JsonSerializerDefaults.Web);
@@ -139,6 +141,8 @@ internal sealed class PageSettings
                 clean.Names[id] = trimmed.Length > MaxName ? trimmed[..MaxName] : trimmed;
         }
         clean.Hidden = (page.Hidden ?? new())
+            .Where(k => k is { Length: > 0 and <= MaxKey }).Distinct().Take(MaxEntries).ToList();
+        clean.WatchFans = (page.WatchFans ?? new())
             .Where(k => k is { Length: > 0 and <= MaxKey }).Distinct().Take(MaxEntries).ToList();
         var a = page.Alerts ?? new();
         clean.Alerts = new AlertSettings { Temps = a.Temps, Fans = a.Fans, Space = a.Space, Wear = a.Wear };

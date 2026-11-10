@@ -25,6 +25,9 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     private readonly ConcurrentDictionary<string, RingBuffer> _history = new();
 
     private volatile Snapshot _latest = Snapshot.Empty;
+    // When the sensors' minimum and maximum started counting: the page tells how long a fan has
+    // been watched when it says "it hasn't turned in the last ...".
+    private readonly DateTimeOffset _watchingSince = DateTimeOffset.UtcNow;
     private string? _systemDrive;
 
     // Reading every sensor takes a few hundred milliseconds on a big machine, mostly in parts
@@ -239,7 +242,8 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
                 groups,
                 BuildSummary(groups),
                 SystemDrive: _systemDrive,
-                MachineName: Environment.MachineName);
+                MachineName: Environment.MachineName,
+                WatchingSince: _watchingSince);
         }
         catch (Exception ex)
         {

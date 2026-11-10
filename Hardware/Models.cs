@@ -8,7 +8,8 @@ public sealed record Snapshot(
     Summary Summary,
     bool Ready = true,
     string? SystemDrive = null,     // model of the disk Windows runs from, matched by name on the page
-    string? MachineName = null)
+    string? MachineName = null,
+    DateTimeOffset? WatchingSince = null)   // start of every sensor's Min and Max
 {
     /// <summary>Served while the hardware session is still opening (several seconds at startup).</summary>
     public static readonly Snapshot Empty =

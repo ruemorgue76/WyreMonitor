@@ -34,6 +34,7 @@ function loadSettings() {
     anim: saved.anim !== false,
     names: cleanNames(saved.names),             // sensor id -> name chosen by the user
     hidden: cleanHidden(saved.hidden),          // part names and fan sensor ids left off the board
+    watchFans: cleanHidden(saved.watchFans),    // fan sensor ids the user wants an alert for at 0 RPM
     alerts: cleanAlerts(saved.alerts),
   };
 }
@@ -79,6 +80,7 @@ function mirrorToApp() {
   try {
     window.chrome?.webview?.postMessage({
       type: "settings", unit: settings.unit, names: settings.names, hidden: settings.hidden, alerts: settings.alerts,
+      watchFans: settings.watchFans,
       theme: settings.theme, palette: settings.cb ? "cb" : "standard",
     });
   } catch { /* not in the app window */ }
@@ -412,7 +414,6 @@ const state = {
   level: "off",        // the verdict's state: ok, warn, crit, or off (loading, no data)
   code: "",            // the debug display: the code of the part that needs checking
   announced: "",       // what the screen-reader live region last said (the state, not the values)
-  spun: new Set(),     // fan headers seen turning since the window opened
   incident: null,      // the alert in progress: { label, peak, kind, start }
   recovered: null,     // the last one that cleared, shown for a while: { ..., end }
 };
@@ -833,17 +834,17 @@ function updateBoard(m) {
     const el = board.querySelector(`[data-fan="${CSS.escape(f.sensor.id)}"]`);
     if (!el) continue;
     const on = f.sensor.value > 0;
-    if (f.sensor.value > 200 || (f.sensor.history ?? []).some((v) => v > 200)) state.spun.add(f.sensor.id);
     // A header that has not turned since the window opened is an empty socket: drawn as its pins,
     // quiet. "Stopped" is kept for a fan that was turning.
-    const spun = state.spun.has(f.sensor.id);
-    el.classList.toggle("empty", !on && !spun);
-    // A fan that was turning and stopped is an alert: it stands out on the board too.
-    el.classList.toggle("alarm", !on && spun && settings.alerts.fans);
+    // Only what the sensor reads now: a header reading 0 RPM may be a fan standing still or an
+    // empty header, and the reading can't tell them apart. A fan the user asked to keep an eye
+    // on (fanStopped) is an alert at 0 RPM, and stands out on the board too.
+    const stopped = fanStopped(f);
+    el.classList.toggle("alarm", stopped && settings.alerts.fans);
     setFanIcon(el, f.sensor.value);
-    const text = on ? `${fixed(f.sensor.value)} RPM` : spun ? "Stopped" : "0 rpm";
+    const text = on ? `${fixed(f.sensor.value)} RPM` : stopped ? "Stopped" : "0 RPM";
     setText(el.querySelector(".val"), text);
-    name(el, `${fanName(f)}, ${on ? text : spun ? "stopped" : "not turning"}`);
+    name(el, `${fanName(f)}, ${on ? text : stopped ? "stopped" : "0 RPM"}`);
   }
 
   for (const g of m.dimms) {
@@ -1008,12 +1009,11 @@ function collectAlerts(m) {
         `Remaining life ${fixed(d.life.value)} %. Back up its data and plan a replacement.`, d.group.name);
     }
   }
-  // A fan that was spinning and stopped. Graphics card fans are left out: they stop on purpose.
+  // A fan the user asked to keep an eye on, reading 0 RPM. Graphics card fans are left out: they
+  // stop on purpose.
   for (const f of on.fans ? m.fans : []) {
-    const h = f.sensor.history ?? [];
-    const recent = h.slice(-5);
-    if (recent.length === 5 && recent.every((v) => v === 0) && h.some((v) => v > 200)) {
-      add(2, `${fanName(f)} stopped`, "It was spinning a moment ago. Check its cable and that nothing blocks it.", f.group.name, { label: fanName(f), code: `F${f.label[0]}` });
+    if (fanStopped(f)) {
+      add(2, `${fanName(f)} stopped`, "It reads 0 RPM. Check its cable and that nothing blocks it.", f.group.name, { label: fanName(f), code: `F${f.label[0]}` });
     }
   }
   return alerts.sort((a, b) => b.sev - a.sev);
@@ -1172,6 +1172,13 @@ function renderRail() {
   const target = hideTarget();
   $("hidePart").hidden = !target;
   if (target) setText($("hidePart"), `Hide ${target.label} from the board`);
+  const fan = selectedFan();
+  $("fanWatchRow").hidden = !fan;
+  if (fan) {
+    setText($("fanWatchText"), `Alert me if ${fanName(fan)} stops`);
+    $("fanWatch").checked = settings.watchFans.includes(fan.sensor.id);
+  }
+  updateFanClues();
   setText($("renameToggle"), state.renaming ? "Done renaming" : "Rename sensors");
   $("renameToggle").setAttribute("aria-pressed", String(state.renaming));
 
@@ -1215,6 +1222,7 @@ function updateRail() {
   const g = m.snapshot.hardware.find((h) => h.name === state.selected);
   if (!g) return;
 
+  updateFanClues();
   const byId = new Map(g.sensors.map((s) => [s.id, s]));
   for (const [id, row] of state.sensorRows) {
     const s = byId.get(id);
@@ -1244,6 +1252,55 @@ function shownName(sensor) { const f = boardFan(sensor); return f ? fanName(f) :
 
 // What "Hide from the board" hides: the fan shown in the chart when it came from a fan tile,
 // otherwise the selected part. A controller reached only through its fans has no tile to hide.
+// A fan the user wants an alert for ("Alert me if it stops"), reading 0 RPM in its last three
+// readings: one odd reading is not a stop.
+function fanStopped(f) {
+  if (!settings.watchFans.includes(f.sensor.id) || f.sensor.value > 0) return false;
+  const recent = (f.sensor.history ?? []).slice(-3);
+  return recent.length === 3 && recent.every((v) => v <= 0);
+}
+
+// The fan shown in the detail panel when it was opened from a fan tile, or null.
+function selectedFan() {
+  const m = state.model;
+  return m.fans.find((f) => f.sensor.id === state.chartId && f.group.name === state.selected) ?? null;
+}
+
+// For a fan reading 0 RPM, the clues that help tell a fan standing still from an empty header:
+// has it turned since the service started counting, and what does the board ask of it. Only
+// readings; the user decides (docs/design/fans.md).
+function updateFanClues() {
+  const fan = selectedFan();
+  const still = !!fan && fan.sensor.value <= 0;
+  $("fanClues").hidden = !still;
+  if (!still) return;
+  const snap = state.model.snapshot;
+  const watched = Date.parse(snap.timestamp) - Date.parse(snap.watchingSince ?? "");
+  const span = Number.isFinite(watched) ? watchedFor(watched) : "since WyreMonitor started";
+  const max = fan.sensor.max ?? Math.max(0, ...(fan.sensor.history ?? []));
+  setText($("clueMax"), max > 0
+    ? `It turned ${span}, up to ${fixed(max)} RPM: a fan is connected, standing still now.`
+    : `It hasn't turned ${span}.`);
+  // The speed the board asks for, where the chip reports it: same chip, same number.
+  const controlId = fan.sensor.id.replace(/\/fan\/(\d+)$/, "/control/$1");
+  const control = fan.group.sensors.find((s) => s.type === "Control" && s.id === controlId);
+  $("clueAsk").hidden = !control;
+  if (control) {
+    setText($("clueAsk"), control.value > 0
+      ? `The board asks it for ${fixed(control.value)} % and reads 0 RPM: an empty header, or a fan that doesn't respond.`
+      : "The board asks it for 0 %: it is off on purpose.");
+  }
+}
+
+function watchedFor(ms) {
+  const min = Math.round(ms / 60000);
+  if (min <= 1) return "in the last minute";
+  if (min < 60) return `in the last ${min} minutes`;
+  const h = Math.round(min / 60);
+  if (h < 48) return h === 1 ? "in the last hour" : `in the last ${h} hours`;
+  return `in the last ${Math.round(h / 24)} days`;
+}
+
 function hideTarget() {
   const m = state.model;
   const fan = m.fans.find((f) => f.sensor.id === state.chartId && f.group.name === state.selected);
@@ -1545,6 +1602,18 @@ $("sensors").addEventListener("change", (e) => {
 $("sensors").addEventListener("keydown", (e) => {
   if (e.key === "Enter" && e.target.dataset?.rename !== undefined) e.target.blur();
 });
+
+$("fanWatch").addEventListener("change", (e) => {
+  const fan = selectedFan();
+  if (!fan) return;
+  const id = fan.sensor.id;
+  settings.watchFans = settings.watchFans.filter((k) => k !== id);
+  if (e.target.checked && settings.watchFans.length < MAX_ENTRIES) settings.watchFans.push(id);
+  rebuild();
+});
+
+// "It's empty, hide it": the same as "Hide Fan … from the board" for the fan shown.
+$("clueHide").addEventListener("click", () => $("hidePart").click());
 
 $("hidePart").addEventListener("click", () => {
   const target = hideTarget();
