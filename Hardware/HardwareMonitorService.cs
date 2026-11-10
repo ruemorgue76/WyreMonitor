@@ -1,7 +1,10 @@
 using System.Collections.Concurrent;
 using System.Management;
 using System.Security.Principal;
+using System.Globalization;
 using LibreHardwareMonitor.Hardware;
+using Microsoft.Win32;
+using WyreMonitor.Desktop;
 
 namespace WyreMonitor.Hardware;
 
@@ -25,9 +28,23 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     private readonly ConcurrentDictionary<string, RingBuffer> _history = new();
 
     private volatile Snapshot _latest = Snapshot.Empty;
-    // When the sensors' minimum and maximum started counting: the page tells how long a fan has
-    // been watched when it says "it hasn't turned in the last ...".
-    private readonly DateTimeOffset _watchingSince = DateTimeOffset.UtcNow;
+
+    // Fan headers that have had a signal (docs/design/fans.md): when they last had one, and how
+    // long the service has watched them since without one. Facts only: the page applies the rules.
+    // Kept in HKLM, which only administrators and this service can change.
+    private sealed class FanSignal
+    {
+        public DateTimeOffset LastSignal;
+        public double QuietSeconds;
+    }
+    private const string FansValue = "Fans";
+    private const double MaxRealRpm = 30000;                 // above this a reading is not a fan
+    private static readonly TimeSpan MaxWatchedGap = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan FanSaveEvery = TimeSpan.FromMinutes(10);
+    private readonly Dictionary<string, FanSignal> _fans = LoadFans();
+    private readonly Dictionary<string, int> _fanStreak = new();
+    private DateTime _lastFanCheck = DateTime.MinValue;
+    private DateTime _lastFanSave = DateTime.UtcNow;
     private string? _systemDrive;
 
     // Reading every sensor takes a few hundred milliseconds on a big machine, mostly in parts
@@ -236,6 +253,8 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
                     groups.Add(BuildGroup(sub, samples, parent: hw.Name));
             }
 
+            UpdateFans(groups);
+
             _latest = new Snapshot(
                 DateTimeOffset.UtcNow,
                 IsElevated,
@@ -243,7 +262,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
                 BuildSummary(groups),
                 SystemDrive: _systemDrive,
                 MachineName: Environment.MachineName,
-                WatchingSince: _watchingSince);
+                FanSignals: _fans.Select(f => new FanSignalInfo(f.Key, f.Value.LastSignal, Math.Round(f.Value.QuietSeconds / 3600, 2))).ToList());
         }
         catch (Exception ex)
         {
@@ -277,6 +296,85 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
 
         var name = parent is null ? hw.Name : $"{parent} › {hw.Name}";
         return new HardwareGroup(name, hw.HardwareType.ToString(), sensors);
+    }
+
+    /// <summary>
+    /// Notes which fan headers have a signal now. Only time between close readings counts as
+    /// watched: while the service isn't reading (no window, PC off) nothing is counted.
+    /// </summary>
+    private void UpdateFans(IReadOnlyList<HardwareGroup> groups)
+    {
+        var now = DateTime.UtcNow;
+        var gap = _lastFanCheck == DateTime.MinValue ? TimeSpan.Zero : now - _lastFanCheck;
+        _lastFanCheck = now;
+        var watched = gap > TimeSpan.Zero && gap <= MaxWatchedGap ? gap.TotalSeconds : 0;
+        var changed = false;
+
+        foreach (var g in groups.Where(g => g.Type is "SuperIO" or "EmbeddedController"))
+        {
+            foreach (var s in g.Sensors.Where(s => s.Type == "Fan"))
+            {
+                var signal = s.Value is > 0 and < MaxRealRpm;
+                // Two readings in a row: one odd reading is not a signal.
+                var streak = signal ? _fanStreak.GetValueOrDefault(s.Id) + 1 : 0;
+                _fanStreak[s.Id] = streak;
+                if (_fans.TryGetValue(s.Id, out var fan))
+                {
+                    if (streak >= 2) { fan.LastSignal = DateTimeOffset.UtcNow; fan.QuietSeconds = 0; }
+                    else if (!signal) fan.QuietSeconds += watched;
+                }
+                else if (streak >= 2)
+                {
+                    _fans[s.Id] = new FanSignal { LastSignal = DateTimeOffset.UtcNow };
+                    changed = true;
+                }
+            }
+        }
+
+        if (changed || now - _lastFanSave >= FanSaveEvery)
+        {
+            _lastFanSave = now;
+            SaveFans();
+        }
+    }
+
+    // One line per header: id, last signal (Unix seconds), watched seconds without a signal.
+    private static Dictionary<string, FanSignal> LoadFans()
+    {
+        var fans = new Dictionary<string, FanSignal>();
+        try
+        {
+            using var key = Registry.LocalMachine.OpenSubKey(AppInfo.RegistryKey);
+            if (key?.GetValue(FansValue) is not string[] lines) return fans;
+            foreach (var line in lines.Take(200))
+            {
+                var parts = line.Split('	');
+                if (parts.Length == 3 && parts[0].Length is > 0 and <= 256 &&
+                    long.TryParse(parts[1], NumberStyles.Integer, CultureInfo.InvariantCulture, out var last) &&
+                    double.TryParse(parts[2], NumberStyles.Float, CultureInfo.InvariantCulture, out var quiet) &&
+                    quiet >= 0 && double.IsFinite(quiet))
+                    fans[parts[0]] = new FanSignal { LastSignal = DateTimeOffset.FromUnixTimeSeconds(last), QuietSeconds = quiet };
+            }
+        }
+        catch { /* nothing remembered: every header starts empty */ }
+        return fans;
+    }
+
+    private void SaveFans()
+    {
+        try
+        {
+            using var key = Registry.LocalMachine.CreateSubKey(AppInfo.RegistryKey);
+            key.SetValue(FansValue, _fans.OrderBy(f => f.Key, StringComparer.Ordinal)
+                .Select(f => string.Join('	', f.Key,
+                    f.Value.LastSignal.ToUnixTimeSeconds().ToString(CultureInfo.InvariantCulture),
+                    Math.Round(f.Value.QuietSeconds).ToString(CultureInfo.InvariantCulture)))
+                .ToArray(), RegistryValueKind.MultiString);
+        }
+        catch
+        {
+            // A development run without administrator rights: remembered until it stops.
+        }
     }
 
     private double[] PushHistory(string id, double value, int samples)
@@ -435,6 +533,8 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     public Task StopAsync(CancellationToken cancellationToken)
     {
         _timer?.Change(Timeout.Infinite, Timeout.Infinite);
+        // The hours counted since the last save are kept across an update or a restart.
+        lock (_updateLock) SaveFans();
         return Task.CompletedTask;
     }
 

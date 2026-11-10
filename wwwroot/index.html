@@ -116,15 +116,13 @@
       </div>
       <label class="fan-watch" id="fanWatchRow" hidden><input type="checkbox" id="fanWatch" /> <span id="fanWatchText"></span></label>
       <div class="fan-clues" id="fanClues" hidden>
-        <p class="fan-clues-title">Is anything connected here?</p>
-        <p class="fan-clues-why">A header reads 0 RPM both when its fan stands still and when nothing is plugged in. These clues help you tell.</p>
+        <p class="fan-clues-title" id="clueTitle"></p>
         <ul>
-          <li id="clueMax"></li>
+          <li id="clueMain"></li>
           <li id="clueAsk" hidden></li>
-          <li>Fans that stop by themselves start when the PC works hard: a header that stays at 0 RPM even then is probably empty.</li>
-          <li>To be sure: the fan page of your BIOS lists every header by name, and the motherboard manual tells which header this is.</li>
+          <li id="clueTip">To be sure: the fan page of your BIOS lists every header by name, and the motherboard manual tells which header this is.</li>
         </ul>
-        <button type="button" class="link" id="clueHide">It's empty, hide it</button>
+        <button type="button" class="link" id="clueAction"></button>
       </div>
       <div class="scope">
         <p class="scope-name" id="scopeName"></p>

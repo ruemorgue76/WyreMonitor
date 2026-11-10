@@ -12,7 +12,7 @@ internal static partial class AlertRules
 {
     public sealed record Sensor(string Id, string Name, string Type, double Value);
     public sealed record Group(string Name, string Type, List<Sensor> Sensors);
-    public sealed record Reading(bool Ready, bool Elevated, double? CpuTemp, string? SystemDrive, List<Group> Hardware);
+    public sealed record Reading(bool Ready, bool Elevated, double? CpuTemp, string? SystemDrive, List<Group> Hardware, HashSet<string> SignalledFans);
     public sealed record Alert(string Key, int Severity, string Title, string Detail);
 
     /// <summary>How many checks in a row each fan read 0 RPM.</summary>
@@ -60,7 +60,12 @@ internal static partial class AlertRules
         }
         double? cpuTemp = root.TryGetProperty("summary", out var summary) ? Num(summary, "cpuTemp") : null;
         var drive = root.TryGetProperty("systemDrive", out var sd) && sd.ValueKind == JsonValueKind.String ? sd.GetString() : null;
-        return new Reading(Bool(root, "ready", true), Bool(root, "elevated", false), cpuTemp, drive, groups);
+        // Headers that have had a signal (docs/design/fans.md): an empty header never alerts.
+        var signalled = new HashSet<string>();
+        if (root.TryGetProperty("fanSignals", out var fs) && fs.ValueKind == JsonValueKind.Array)
+            foreach (var f in fs.EnumerateArray())
+                if (Str(f, "id") is { Length: > 0 } id) signalled.Add(id);
+        return new Reading(Bool(root, "ready", true), Bool(root, "elevated", false), cpuTemp, drive, groups, signalled);
     }
 
     public static Limit CpuLimit(Reading r, PageSettings page)
@@ -158,7 +163,7 @@ internal static partial class AlertRules
                 // empty header. Two checks in a row: one odd reading is not a stop.
                 var zeros = f.Value <= 0 ? fanWatch.Zeros.GetValueOrDefault(f.Id) + 1 : 0;
                 fanWatch.Zeros[f.Id] = zeros;
-                if (!on.Fans || !Shown(f.Id) || !page.WatchFans.Contains(f.Id) || zeros < 2) continue;
+                if (!on.Fans || !Shown(f.Id) || !page.WatchFans.Contains(f.Id) || !r.SignalledFans.Contains(f.Id) || zeros < 2) continue;
                 var name = page.Names.TryGetValue(f.Id, out var custom) ? custom : $"Fan {(char)('A' + c)}{i + 1}";
                 alerts.Add(new($"fan:{f.Id}", 2, $"{name} stopped", "It reads 0 RPM. Check its cable and that nothing blocks it."));
             }

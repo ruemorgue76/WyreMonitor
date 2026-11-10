@@ -9,13 +9,17 @@ public sealed record Snapshot(
     bool Ready = true,
     string? SystemDrive = null,     // model of the disk Windows runs from, matched by name on the page
     string? MachineName = null,
-    DateTimeOffset? WatchingSince = null)   // start of every sensor's Min and Max
+    IReadOnlyList<FanSignalInfo>? FanSignals = null)
 {
     /// <summary>Served while the hardware session is still opening (several seconds at startup).</summary>
     public static readonly Snapshot Empty =
         new(DateTimeOffset.UtcNow, false, Array.Empty<HardwareGroup>(),
             new Summary(null, null, null, null, null, null, null, null, null, null), Ready: false);
 }
+
+/// <summary>A fan header that has had a signal: when it last had one, and the hours the service
+/// has watched it since without one (docs/design/fans.md).</summary>
+public sealed record FanSignalInfo(string Id, DateTimeOffset LastSignal, double QuietHours);
 
 public sealed record HardwareGroup(
     string Name,

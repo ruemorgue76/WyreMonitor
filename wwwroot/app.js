@@ -35,6 +35,7 @@ function loadSettings() {
     names: cleanNames(saved.names),             // sensor id -> name chosen by the user
     hidden: cleanHidden(saved.hidden),          // part names and fan sensor ids left off the board
     watchFans: cleanHidden(saved.watchFans),    // fan sensor ids the user wants an alert for at 0 RPM
+    forgotFans: cleanTimes(saved.forgotFans),   // fan sensor id -> when "Back to empty header" was pressed
     alerts: cleanAlerts(saved.alerts),
   };
 }
@@ -48,6 +49,16 @@ function cleanNames(value) {
     }
   }
   return names;
+}
+
+function cleanTimes(value) {
+  const times = Object.create(null);
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    for (const [id, t] of Object.entries(value).slice(0, MAX_ENTRIES)) {
+      if (Number.isFinite(t) && t > 0 && id.length <= 256) times[id] = t;
+    }
+  }
+  return times;
 }
 
 function cleanHidden(value) {
@@ -834,17 +845,16 @@ function updateBoard(m) {
     const el = board.querySelector(`[data-fan="${CSS.escape(f.sensor.id)}"]`);
     if (!el) continue;
     const on = f.sensor.value > 0;
-    // A header that has not turned since the window opened is an empty socket: drawn as its pins,
-    // quiet. "Stopped" is kept for a fan that was turning.
-    // Only what the sensor reads now: a header reading 0 RPM may be a fan standing still or an
-    // empty header, and the reading can't tell them apart. A fan the user asked to keep an eye
-    // on (fanStopped) is an alert at 0 RPM, and stands out on the board too.
+    // An empty header until it has a signal, then a fan (docs/design/fans.md). A fan the user
+    // asked to keep an eye on is an alert at 0 RPM, and stands out on the board too.
+    const fan = isFan(f);
+    el.classList.toggle("empty", !fan);
     const stopped = fanStopped(f);
     el.classList.toggle("alarm", stopped && settings.alerts.fans);
     setFanIcon(el, f.sensor.value);
-    const text = on ? `${fixed(f.sensor.value)} RPM` : stopped ? "Stopped" : "0 RPM";
+    const text = on ? `${fixed(f.sensor.value)} RPM` : !fan ? "No signal" : stopped ? "Stopped" : "0 RPM";
     setText(el.querySelector(".val"), text);
-    name(el, `${fanName(f)}, ${on ? text : stopped ? "stopped" : "0 RPM"}`);
+    name(el, `${fanName(f)}, ${on ? text : !fan ? "empty header, no signal" : stopped ? "stopped" : "0 RPM"}`);
   }
 
   for (const g of m.dimms) {
@@ -1173,7 +1183,8 @@ function renderRail() {
   $("hidePart").hidden = !target;
   if (target) setText($("hidePart"), `Hide ${target.label} from the board`);
   const fan = selectedFan();
-  $("fanWatchRow").hidden = !fan;
+  // No alert on an empty header: nothing there to stop.
+  $("fanWatchRow").hidden = !fan || !isFan(fan);
   if (fan) {
     setText($("fanWatchText"), `Alert me if ${fanName(fan)} stops`);
     $("fanWatch").checked = settings.watchFans.includes(fan.sensor.id);
@@ -1252,10 +1263,30 @@ function shownName(sensor) { const f = boardFan(sensor); return f ? fanName(f) :
 
 // What "Hide from the board" hides: the fan shown in the chart when it came from a fan tile,
 // otherwise the selected part. A controller reached only through its fans has no tile to hide.
-// A fan the user wants an alert for ("Alert me if it stops"), reading 0 RPM in its last three
-// readings: one odd reading is not a stop.
+// ---- Fans: an empty header until it has a signal (docs/design/fans.md) ------------------------
+const QUIET_HOURS = 100;   // hours of use without a signal before a fan goes back to an empty header
+
+// What the service saw of a header: when it last had a signal, and the hours watched since.
+function fanSignal(id) {
+  return (state.model.snapshot.fanSignals ?? []).find((s) => s.id === id) ?? null;
+}
+
+// A header is a fan while it turns, and after a signal until: the user pressed "Back to empty
+// header" (a later signal counts again), or 100 hours of use passed without one, unless its
+// alert is on.
+function isFan(f) {
+  if (f.sensor.value > 0) return true;
+  const sig = fanSignal(f.sensor.id);
+  if (!sig) return false;
+  const forgot = settings.forgotFans[f.sensor.id];
+  if (forgot && forgot >= Date.parse(sig.lastSignal)) return false;
+  return settings.watchFans.includes(f.sensor.id) || sig.quietHours < QUIET_HOURS;
+}
+
+// A fan with "Alert me if it stops" on, reading 0 RPM in its last three readings: one odd
+// reading is not a stop.
 function fanStopped(f) {
-  if (!settings.watchFans.includes(f.sensor.id) || f.sensor.value > 0) return false;
+  if (!settings.watchFans.includes(f.sensor.id) || f.sensor.value > 0 || !isFan(f)) return false;
   const recent = (f.sensor.history ?? []).slice(-3);
   return recent.length === 3 && recent.every((v) => v <= 0);
 }
@@ -1266,39 +1297,47 @@ function selectedFan() {
   return m.fans.find((f) => f.sensor.id === state.chartId && f.group.name === state.selected) ?? null;
 }
 
-// For a fan reading 0 RPM, the clues that help tell a fan standing still from an empty header:
-// has it turned since the service started counting, and what does the board ask of it. Only
-// readings; the user decides (docs/design/fans.md).
+// The detail panel of a header at 0 RPM: an empty header, or a fan standing still.
 function updateFanClues() {
   const fan = selectedFan();
   const still = !!fan && fan.sensor.value <= 0;
   $("fanClues").hidden = !still;
   if (!still) return;
-  const snap = state.model.snapshot;
-  const watched = Date.parse(snap.timestamp) - Date.parse(snap.watchingSince ?? "");
-  const span = Number.isFinite(watched) ? watchedFor(watched) : "since WyreMonitor started";
-  const max = fan.sensor.max ?? Math.max(0, ...(fan.sensor.history ?? []));
-  setText($("clueMax"), max > 0
-    ? `It turned ${span}, up to ${fixed(max)} RPM: a fan is connected, standing still now.`
-    : `It hasn't turned ${span}.`);
+  const id = fan.sensor.id;
+  const known = isFan(fan);
+  const sig = fanSignal(id);
+  setText($("clueTitle"), known ? "Standing still" : "No fan seen on this header");
+  if (known) {
+    const h = Math.floor(sig.quietHours);
+    const quiet = h < 1 ? "less than an hour" : `${h} ${h === 1 ? "hour" : "hours"}`;
+    setText($("clueMain"), `Last signal: ${ago(sig.lastSignal)}. ` + (settings.watchFans.includes(id)
+      ? "It stays a fan while its alert is on."
+      : `Without a signal for ${QUIET_HOURS} hours of use it goes back to an empty header: ${quiet} so far.`));
+  } else {
+    setText($("clueMain"), "It becomes a fan as soon as it gets a signal, and stays one.");
+  }
   // The speed the board asks for, where the chip reports it: same chip, same number.
-  const controlId = fan.sensor.id.replace(/\/fan\/(\d+)$/, "/control/$1");
+  const controlId = id.replace(/\/fan\/(\d+)$/, "/control/$1");
   const control = fan.group.sensors.find((s) => s.type === "Control" && s.id === controlId);
   $("clueAsk").hidden = !control;
   if (control) {
-    setText($("clueAsk"), control.value > 0
-      ? `The board asks it for ${fixed(control.value)} % and reads 0 RPM: an empty header, or a fan that doesn't respond.`
-      : "The board asks it for 0 %: it is off on purpose.");
+    setText($("clueAsk"), control.value <= 0 ? "The board asks it for 0 %: it is off on purpose."
+      : known ? `The board asks it for ${fixed(control.value)} % and reads 0 RPM: it doesn't respond.`
+      : `The board asks it for ${fixed(control.value)} % and reads 0 RPM.`);
   }
+  $("clueTip").hidden = known;
+  setText($("clueAction"), known ? "Back to empty header" : "Hide it from the board");
 }
 
-function watchedFor(ms) {
-  const min = Math.round(ms / 60000);
-  if (min <= 1) return "in the last minute";
-  if (min < 60) return `in the last ${min} minutes`;
+// "2 hours ago", from the time of the reading.
+function ago(when) {
+  const min = Math.round((Date.parse(state.model.snapshot.timestamp) - Date.parse(when)) / 60000);
+  if (!Number.isFinite(min)) return "unknown";
+  if (min < 1) return "just now";
+  if (min < 60) return `${min} ${min === 1 ? "minute" : "minutes"} ago`;
   const h = Math.round(min / 60);
-  if (h < 48) return h === 1 ? "in the last hour" : `in the last ${h} hours`;
-  return `in the last ${Math.round(h / 24)} days`;
+  if (h < 48) return `${h} ${h === 1 ? "hour" : "hours"} ago`;
+  return `${Math.round(h / 24)} days ago`;
 }
 
 function hideTarget() {
@@ -1612,8 +1651,17 @@ $("fanWatch").addEventListener("change", (e) => {
   rebuild();
 });
 
-// "It's empty, hide it": the same as "Hide Fan … from the board" for the fan shown.
-$("clueHide").addEventListener("click", () => $("hidePart").click());
+// The detail panel's button: "Back to empty header" for a fan (its alert goes off too; a later
+// signal makes it a fan again), "Hide it from the board" for an empty header.
+$("clueAction").addEventListener("click", () => {
+  const fan = selectedFan();
+  if (!fan) return;
+  if (!isFan(fan)) { $("hidePart").click(); return; }
+  const id = fan.sensor.id;
+  if (Object.keys(settings.forgotFans).length < MAX_ENTRIES || id in settings.forgotFans) settings.forgotFans[id] = Date.now();
+  settings.watchFans = settings.watchFans.filter((k) => k !== id);
+  rebuild();
+});
 
 $("hidePart").addEventListener("click", () => {
   const target = hideTarget();

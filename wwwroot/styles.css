@@ -1032,8 +1032,13 @@ body.hc .fan.off .val { color: var(--silk); }
 .fan-clues { margin-top: 12px; padding: 10px 12px 12px; border: 1px solid var(--silk-line); border-radius: 3px; font-size: 13px; line-height: 1.45; }
 .fan-clues[hidden] { display: none; }
 .fan-clues-title { font-weight: 700; }
-.fan-clues-why { color: var(--silk-dim); margin-top: 2px; }
 .fan-clues ul { margin: 8px 0 0; padding-left: 16px; display: grid; gap: 5px; }
 .fan-clues li[hidden] { display: none; }
 .fan-clues li:nth-child(n+3) { color: var(--silk-dim); }
 .fan-clues .link { margin-top: 10px; }
+
+/* An empty header, with no signal yet (docs/design/fans.md): its pins on the board, outlined,
+   not a part. Wins over the quiet look of a fan at 0 RPM above. */
+.fan.off.empty { background: transparent; outline: 1px dashed var(--silk-line); outline-offset: -1px; }
+.fan.off.empty .rotor { opacity: 1; }
+body[data-theme="white"] .fan.off.empty { --silk: #17201c; --silk-dim: #4f5d56; }
