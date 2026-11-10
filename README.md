@@ -181,6 +181,10 @@ dotnet build -c Release            # build
 .\Build-Installer.ps1              # installer in installer\output\
 ```
 
+Every change to the program on `main` is also built by GitHub Actions into a test installer, not
+published: open the latest **Test build** run in the Actions tab and download it under
+**Artifacts**. The run's summary lists the changes not yet published and suggests when to publish.
+
 <details>
 <summary>Publishing a release</summary>
 

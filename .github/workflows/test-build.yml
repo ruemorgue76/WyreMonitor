@@ -1,0 +1,111 @@
+# Test installer: every change to the program on main is built into an installer you can download
+# and try, without publishing anything. Open the run in the Actions tab: the installer is under
+# "Artifacts", and the summary lists what is not published yet and whether it is time to publish.
+
+name: Test build
+
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**.md'
+      - 'docs/**'
+      - 'release-notes/**'
+      - 'packaging/**'
+      - '.github/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A newer push replaces a test build still running.
+concurrency:
+  group: test-build
+  cancel-in-progress: true
+
+jobs:
+  installer:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build the installer
+        id: build
+        shell: pwsh
+        run: |
+          $setup = ./Build-Installer.ps1 | Select-Object -Last 1
+          "path=$($setup.FullName)" >> $env:GITHUB_OUTPUT
+          "name=test-installer-$(Get-Date -Format yyyy-MM-dd)-$($env:GITHUB_SHA.Substring(0,7))" >> $env:GITHUB_OUTPUT
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ${{ steps.build.outputs.name }}
+          path: ${{ steps.build.outputs.path }}
+          if-no-files-found: error
+          retention-days: 30
+
+  # What is waiting to be published, and a suggestion. Written to the run's summary page.
+  suggestion:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Unpublished changes
+        shell: bash
+        run: |
+          last=$(git describe --tags --abbrev=0 --match 'v*.*.*' 2>/dev/null || true)
+          if [ -z "$last" ]; then echo "No published version yet." >> "$GITHUB_STEP_SUMMARY"; exit 0; fi
+          last_date=$(git log -1 --format=%cs "$last")
+          days=$(( ( $(date +%s) - $(git log -1 --format=%ct "$last") ) / 86400 ))
+
+          # Changes to the program itself: what users would get. Documentation and CI don't count.
+          program='Desktop Hardware Service wwwroot installer Program.cs NativeMethods.cs WyreMonitor.csproj packages.lock.json app.ico app.manifest Properties'
+          changes=$(git log "$last..HEAD" --no-merges --format='- %s (%cs)' -- $program | grep -v '^- Version [0-9]' || true)
+          count=$( [ -n "$changes" ] && echo "$changes" | wc -l || echo 0 )
+          next=$(date -d "$last_date + 14 days" +%Y-%m-%d)
+
+          {
+            echo "## Not published yet"
+            echo
+            echo "Last published version: **${last#v}**, $last_date ($days days ago)."
+            echo
+            if [ "$count" -eq 0 ]; then
+              echo "No changes to the program since then."
+              echo
+              echo "### Suggestion: nothing to publish"
+            else
+              echo "$count change(s) to the program since then:"
+              echo
+              echo "$changes"
+              echo
+              if [ "$days" -ge 14 ]; then
+                echo "### Suggestion: publish"
+                echo "Changes have been waiting for $days days."
+              elif [ "$count" -ge 5 ]; then
+                echo "### Suggestion: publish"
+                echo "There are $count changes waiting: enough for one release."
+              else
+                echo "### Suggestion: it can wait"
+                echo "Collect more changes and publish around **$next** (two weeks after the last version)."
+                echo "Publish sooner only if one of these fixes a serious problem (crash, wrong readings, failed install)."
+              fi
+            fi
+            echo
+            echo "To publish: raise \`<Version>\` in WyreMonitor.csproj, then Actions > Release > Run workflow on main with **Publish** ticked."
+          } >> "$GITHUB_STEP_SUMMARY"
