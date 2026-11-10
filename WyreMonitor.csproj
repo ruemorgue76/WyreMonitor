@@ -6,7 +6,7 @@
     <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
     <OutputType>WinExe</OutputType>
     <UseWindowsForms>true</UseWindowsForms>
-    <Version>1.5.5</Version>
+    <Version>1.5.6</Version>
     <!-- Code signing (SignPath) checks these on every signed file: product name and a version
          equal to <Version>, without the commit hash .NET would otherwise append. -->
     <Product>WyreMonitor</Product>
