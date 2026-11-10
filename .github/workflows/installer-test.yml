@@ -1,0 +1,148 @@
+# Tests what the installer does on a real Windows machine: an update over the latest published
+# version, then an uninstall. Runs on pull requests that touch the installer or the build, and by
+# hand from the Actions tab.
+
+name: Installer test
+
+on:
+  pull_request:
+    paths:
+      - 'installer/**'
+      - 'Build-Installer.ps1'
+      - '.github/workflows/installer-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  update-and-uninstall:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Build the new installer
+        id: build
+        shell: pwsh
+        run: |
+          $setup = ./Build-Installer.ps1 | Select-Object -Last 1
+          "path=$($setup.FullName)" >> $env:GITHUB_OUTPUT
+
+      - name: Install the latest published version
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          gh release download --repo $env:GITHUB_REPOSITORY --pattern 'WyreMonitor-Setup-*.exe' --dir old
+          $old = Get-ChildItem old\WyreMonitor-Setup-*.exe | Select-Object -First 1
+          Write-Host "Installing $($old.Name)"
+          $p = Start-Process $old.FullName '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=old-install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Old installer exit code $($p.ExitCode)" }
+          $svc = Get-Service WyreMonitor
+          Write-Host "Service after the old install: $($svc.Status)"
+
+      - name: Leave something an old version might have left
+        shell: pwsh
+        run: |
+          $app = "$env:ProgramFiles\WyreMonitor"
+          Set-Content "$app\left-by-old-version.dll" 'old'
+          New-Item -ItemType Directory "$app\old-folder" | Out-Null
+          Set-Content "$app\old-folder\old.txt" 'old'
+
+      - name: Install the new version over it
+        shell: pwsh
+        env:
+          SETUP: ${{ steps.build.outputs.path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $p = Start-Process $env:SETUP '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=new-install.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "New installer exit code $($p.ExitCode)" }
+
+      - name: Check the update
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = "$env:ProgramFiles\WyreMonitor"
+          $fail = @()
+
+          # Every file in the folder is one the new version ships (plus its uninstaller).
+          $shipped = @(Get-ChildItem publish -Recurse -File | ForEach-Object { $_.FullName.Substring((Resolve-Path publish).Path.Length + 1) }) + 'LICENSE', 'THIRD-PARTY-NOTICES.md'
+          $installed = Get-ChildItem $app -Recurse -File | ForEach-Object { $_.FullName.Substring($app.Length + 1) }
+          $extra = $installed | Where-Object { $_ -notin $shipped -and $_ -notlike 'unins*' }
+          $missing = $shipped | Where-Object { $_ -notin $installed }
+          if ($extra) { $fail += "Files left from the old version: $($extra -join ', ')" }
+          if ($missing) { $fail += "Files missing: $($missing -join ', ')" }
+
+          # The installed exe is the new build.
+          $newExe = (Get-FileHash publish\WyreMonitor.exe).Hash
+          if ((Get-FileHash "$app\WyreMonitor.exe").Hash -ne $newExe) { $fail += 'WyreMonitor.exe is not the new build' }
+
+          # The service exists, starts automatically, runs the installed exe, and is running.
+          $svc = Get-CimInstance Win32_Service -Filter "Name='WyreMonitor'"
+          if (-not $svc) { $fail += 'The service is missing' }
+          else {
+            Write-Host "Service: $($svc.State), start $($svc.StartMode), $($svc.PathName)"
+            if ($svc.StartMode -ne 'Auto') { $fail += "Service start mode is $($svc.StartMode)" }
+            if ($svc.PathName -notlike "*$app\WyreMonitor.exe*") { $fail += "Service runs $($svc.PathName)" }
+            for ($i = 0; $i -lt 20 -and (Get-Service WyreMonitor).Status -ne 'Running'; $i++) { Start-Sleep 1 }
+            if ((Get-Service WyreMonitor).Status -ne 'Running') { $fail += "Service is $((Get-Service WyreMonitor).Status)" }
+          }
+          $failure = sc.exe qfailure WyreMonitor | Out-String
+          if ($failure -notmatch 'RESTART') { $fail += 'Service recovery (restart on failure) is not set' }
+
+          # One uninstall entry, for the new version.
+          $entries = Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall, HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall |
+            Get-ItemProperty | Where-Object { $_.DisplayName -eq 'WyreMonitor' }
+          $version = ([xml](Get-Content WyreMonitor.csproj -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if (@($entries).Count -ne 1) { $fail += "Uninstall entries: $(@($entries).Count)" }
+          elseif ($entries.DisplayVersion -ne $version) { $fail += "Installed version $($entries.DisplayVersion), expected $version" }
+
+          if ($fail) { $fail | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
+          Write-Host 'Update OK'
+
+      - name: Uninstall
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $app = "$env:ProgramFiles\WyreMonitor"
+          $p = Start-Process "$app\unins000.exe" '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /LOG=uninstall.log' -Wait -PassThru
+          if ($p.ExitCode -ne 0) { throw "Uninstaller exit code $($p.ExitCode)" }
+          # The uninstaller hands over to a copy of itself and finishes in the background.
+          for ($i = 0; $i -lt 60 -and (Test-Path $app); $i++) { Start-Sleep 1 }
+
+      - name: Check the uninstall
+        shell: pwsh
+        run: |
+          $fail = @()
+          if (Test-Path "$env:ProgramFiles\WyreMonitor") { $fail += "Folder left: $((Get-ChildItem "$env:ProgramFiles\WyreMonitor" -Recurse -Name) -join ', ')" }
+          if (Get-Service WyreMonitor -ErrorAction SilentlyContinue) { $fail += 'The service is still there' }
+          if (Get-Process WyreMonitor -ErrorAction SilentlyContinue) { $fail += 'WyreMonitor is still running' }
+          if (Test-Path HKLM:\SOFTWARE\WyreMonitor) { $fail += 'HKLM\SOFTWARE\WyreMonitor is still there' }
+          if (Get-ItemProperty HKCU:\Software\Microsoft\Windows\CurrentVersion\Run -Name WyreMonitor -ErrorAction SilentlyContinue) { $fail += 'The sign-in entry is still there' }
+          if (Test-Path "$env:LOCALAPPDATA\WyreMonitor") { $fail += 'The app data folder is still there' }
+          $entries = Get-ChildItem HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall | Get-ItemProperty | Where-Object { $_.DisplayName -eq 'WyreMonitor' }
+          if ($entries) { $fail += 'The uninstall entry is still there' }
+          if ($fail) { $fail | ForEach-Object { Write-Host "::error::$_" }; exit 1 }
+          Write-Host 'Uninstall OK'
+
+      - name: Setup logs
+        if: always()
+        shell: pwsh
+        run: |
+          foreach ($log in 'old-install.log', 'new-install.log', 'uninstall.log') {
+            if (Test-Path $log) { Write-Host "::group::$log"; Get-Content $log; Write-Host '::endgroup::' }
+          }

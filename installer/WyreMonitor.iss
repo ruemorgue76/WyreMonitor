@@ -62,14 +62,6 @@ Name: "en"; MessagesFile: "compiler:Default.isl"
 Name: "autostart"; Description: "Show the WyreMonitor icon next to the clock when I sign in"
 Name: "desktopicon"; Description: "Create a desktop shortcut"
 
-[InstallDelete]
-; The page's files are replaced as a whole on every update: files a newer version dropped
-; (an old image, say) must not stay behind and keep being served.
-Type: filesandordirs; Name: "{app}\wwwroot"
-; Configuration files of versions up to 1.5.3: the service sets everything in code now.
-Type: files; Name: "{app}\appsettings.json"
-Type: files; Name: "{app}\appsettings.Development.json"
-
 [Files]
 Source: "..\publish\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
@@ -89,6 +81,13 @@ Root: HKLM; Subkey: "SYSTEM\CurrentControlSet\Services\EventLog\Application\Wyre
 [Run]
 ; runasoriginaluser: the window opens with the user's rights, not the installer's.
 Filename: "{app}\WyreMonitor.exe"; Description: "Open WyreMonitor"; Flags: nowait postinstall skipifsilent runasoriginaluser
+
+[UninstallDelete]
+; Files the app or an older version left in its folder: the folder goes as a whole. It is always
+; Program Files\WyreMonitor (see IsInWyreMonitorFolder).
+Type: filesandordirs; Name: "{app}"
+; The app's data for the user who uninstalls: settings, window position, browser profile, log.
+Type: filesandordirs; Name: "{localappdata}\WyreMonitor"
 
 [UninstallRun]
 Filename: "{sys}\sc.exe"; Parameters: "stop WyreMonitor"; Flags: runhidden; RunOnceId: "StopService"
@@ -119,29 +118,83 @@ begin
     Result := ComparePackedVersion(Version, Wanted) >= 0;
 end;
 
+var
+  // Set once the old service has been stopped and kept from restarting, and once the new one is
+  // installed: if setup ends in between (cancelled, failed), the old service is started again.
+  ServicePaused, InstallDone: Boolean;
+
 // The service runs this folder's files as LocalSystem: it must be a folder only administrators
-// can write to. Program Files is; a folder chosen with /DIR= may not be.
-function IsInProgramFiles: Boolean;
+// can write to. It is exactly Program Files\WyreMonitor, never a folder chosen with /DIR=, and
+// never Program Files itself, since an update empties this folder and uninstalling deletes it.
+function IsInWyreMonitorFolder: Boolean;
 begin
-  Result := Pos(Lowercase(AddBackslash(ExpandConstant('{commonpf64}'))), Lowercase(AddBackslash(ExpandConstant('{app}')))) = 1;
+  Result := CompareText(RemoveBackslash(ExpandConstant('{app}')),
+    AddBackslash(ExpandConstant('{commonpf64}')) + 'WyreMonitor') = 0;
+end;
+
+// Stops the service and the app, and waits until they are gone, so that every file can be
+// replaced. The service is set to start manually first: its recovery settings would otherwise
+// start it again if it has to be killed.
+procedure StopWyreMonitor;
+var
+  Attempt, Code: Integer;
+begin
+  Run('sc.exe', 'config WyreMonitor start= demand');
+  Run('sc.exe', 'failure WyreMonitor reset= 0 actions= ""');
+  ServicePaused := True;
+  // sc stop answers 1062 once the service is stopped and 1060 if there is none; 1061 while it
+  // is still stopping.
+  for Attempt := 1 to 30 do
+  begin
+    Code := Run('sc.exe', 'stop WyreMonitor');
+    if (Code = 1062) or (Code = 1060) then break;
+    Sleep(1000);
+  end;
+  // The app, in every session, and the service if it did not stop in time.
+  Run('taskkill.exe', '/f /t /im WyreMonitor.exe');
+  Sleep(1000);
+end;
+
+// Empties the program folder before the new files are copied, so nothing of the old version
+// stays behind (files a newer version no longer ships, old configuration). The uninstaller's
+// own files (unins*) stay: setup updates them.
+procedure CleanAppFolder;
+var
+  Dir: String;
+  Item: TFindRec;
+begin
+  if not IsInWyreMonitorFolder then exit;
+  Dir := AddBackslash(ExpandConstant('{app}'));
+  if not FindFirst(Dir + '*', Item) then exit;
+  try
+    repeat
+      if (Item.Name = '.') or (Item.Name = '..') or (CompareText(Copy(Item.Name, 1, 5), 'unins') = 0) then
+        continue;
+      if Item.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
+      begin
+        if not DelTree(Dir + Item.Name, True, True, True) then Log('Could not remove ' + Dir + Item.Name);
+      end
+      else if not DeleteFile(Dir + Item.Name) then
+        Log('Could not delete ' + Dir + Item.Name);
+    until not FindNext(Item);
+  finally
+    FindClose(Item);
+  end;
 end;
 
 // An update must be able to replace the files: stop the service and close the app.
 // Versions 1.0.x started the app through two scheduled tasks: remove them.
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  if not IsInProgramFiles then
+  if not IsInWyreMonitorFolder then
   begin
-    Result := 'WyreMonitor must be installed in ' + ExpandConstant('{commonpf64}') +
-      ', because its service runs the installed files with full system rights.';
+    Result := 'WyreMonitor must be installed in ' + AddBackslash(ExpandConstant('{commonpf64}')) +
+      'WyreMonitor, because its service runs the installed files with full system rights.';
     exit;
   end;
-  Run('sc.exe', 'stop WyreMonitor');
-  Sleep(2000);
-  Run('taskkill.exe', '/f /t /im WyreMonitor.exe');
+  StopWyreMonitor;
   Run('schtasks.exe', '/delete /tn "WyreMonitor" /f');
   Run('schtasks.exe', '/delete /tn "WyreMonitor Autostart" /f');
-  Sleep(800);
   Result := '';
 end;
 
@@ -213,9 +266,24 @@ end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
+  if CurStep = ssInstall then
+    CleanAppFolder;
   if CurStep = ssPostInstall then
   begin
     if not IsPawnIOCurrent then InstallPawnIO;
     InstallService;
+    InstallDone := True;
+  end;
+end;
+
+// Setup stopped after the old service was paused and before the new one was set up: start the
+// old one again rather than leave the PC without it.
+procedure DeinitializeSetup;
+begin
+  if ServicePaused and not InstallDone then
+  begin
+    Run('sc.exe', 'config WyreMonitor start= auto');
+    Run('sc.exe', 'failure WyreMonitor reset= 86400 actions= restart/5000/restart/5000/restart/60000');
+    Run('sc.exe', 'start WyreMonitor');
   end;
 end;
