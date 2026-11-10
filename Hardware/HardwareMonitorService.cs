@@ -19,6 +19,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
     private readonly ILogger<HardwareMonitorService> _log;
     private readonly Computer _computer;
     private readonly object _updateLock = new();
+    private volatile bool _stopping;   // set when the service stops: no more polls or timer
     private Timer? _timer;
 
     // Rolling history per sensor id: one sample per second for the last 15 minutes (PushHistory).
@@ -144,8 +145,14 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
             try
             {
                 _systemDrive = FindSystemDriveModel();
-                _computer.Open();
+                // Under the lock, so that stopping meanwhile waits for it (see Dispose).
+                lock (_updateLock)
+                {
+                    if (_stopping) return;
+                    _computer.Open();
+                }
                 Poll();
+                if (_stopping) return;
                 // Ticks every half second; Tick decides whether this one reads anything.
                 _timer = new Timer(_ => Tick(), null, TimeSpan.FromMilliseconds(500), TimeSpan.FromMilliseconds(500));
             }
@@ -226,6 +233,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         if (!Monitor.TryEnter(_updateLock)) return;
         try
         {
+            if (_stopping) return;   // the session is closing or closed
             var now = DateTime.UtcNow;
             // After a pause in reading, the old history no longer describes the last minute.
             if (_lastPoll != DateTime.MinValue && now - _lastPoll > IdleStop)
@@ -279,7 +287,9 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
         var sensors = new List<SensorReading>();
         foreach (var s in hw.Sensors)
         {
-            if (s.Value is null || float.IsNaN(s.Value.Value)) continue;
+            // Infinity too (a ratio divided by zero): JSON can't carry it, and one such value
+            // would make every answer of the service fail.
+            if (s.Value is null || !float.IsFinite(s.Value.Value)) continue;
 
             var value = Math.Round(s.Value.Value, 2);
             var reading = new SensorReading(
@@ -288,8 +298,8 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
                 Type: s.SensorType.ToString(),
                 Unit: UnitFor(s.SensorType),
                 Value: value,
-                Min: s.Min is { } mn ? Math.Round(mn, 2) : null,
-                Max: s.Max is { } mx ? Math.Round(mx, 2) : null,
+                Min: s.Min is { } mn && float.IsFinite(mn) ? Math.Round(mn, 2) : null,
+                Max: s.Max is { } mx && float.IsFinite(mx) ? Math.Round(mx, 2) : null,
                 History: PushHistory(s.Identifier.ToString(), value, samples));
             sensors.Add(reading);
         }
@@ -532,6 +542,7 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
 
     public Task StopAsync(CancellationToken cancellationToken)
     {
+        _stopping = true;
         _timer?.Change(Timeout.Infinite, Timeout.Infinite);
         // The hours counted since the last save are kept across an update or a restart.
         lock (_updateLock) SaveFans();
@@ -540,7 +551,12 @@ public sealed class HardwareMonitorService : IHostedService, IDisposable
 
     public void Dispose()
     {
+        _stopping = true;
         _timer?.Dispose();
-        try { _computer.Close(); } catch { /* driver may already be unloaded */ }
+        // The library isn't thread-safe: wait for an Open or a Poll still running before closing.
+        lock (_updateLock)
+        {
+            try { _computer.Close(); } catch { /* driver may already be unloaded */ }
+        }
     }
 }

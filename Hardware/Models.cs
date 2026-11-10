@@ -58,23 +58,32 @@ public sealed class RingBuffer
 
     public RingBuffer(int capacity) => _buffer = new double[capacity];
 
+    // Written by the poll, read by web requests on other threads.
+    private readonly object _gate = new();
+
     public void Add(double value)
     {
-        _buffer[_head] = value;
-        _head = (_head + 1) % _buffer.Length;
-        if (_count < _buffer.Length) _count++;
+        lock (_gate)
+        {
+            _buffer[_head] = value;
+            _head = (_head + 1) % _buffer.Length;
+            if (_count < _buffer.Length) _count++;
+        }
     }
 
-    public double[] ToArray() => Last(_count);
+    public double[] ToArray() => Last(int.MaxValue);
 
     /// <summary>The most recent <paramref name="n"/> values, oldest first.</summary>
     public double[] Last(int n)
     {
-        n = Math.Min(n, _count);
-        var result = new double[n];
-        var start = (_head - n + _buffer.Length) % _buffer.Length;
-        for (var i = 0; i < n; i++)
-            result[i] = _buffer[(start + i) % _buffer.Length];
-        return result;
+        lock (_gate)
+        {
+            n = Math.Min(n, _count);
+            var result = new double[n];
+            var start = (_head - n + _buffer.Length) % _buffer.Length;
+            for (var i = 0; i < n; i++)
+                result[i] = _buffer[(start + i) % _buffer.Length];
+            return result;
+        }
     }
 }

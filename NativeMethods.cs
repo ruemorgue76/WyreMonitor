@@ -22,12 +22,22 @@ internal static class NativeMethods
     {
         const int AfInet = 2;
         const int TcpTableOwnerPidListener = 3;
+        const uint ErrorInsufficientBuffer = 122;
         var size = 0;
         _ = GetExtendedTcpTable(IntPtr.Zero, ref size, false, AfInet, TcpTableOwnerPidListener, 0);
-        var buffer = Marshal.AllocHGlobal(size);
+        var buffer = IntPtr.Zero;
         try
         {
-            if (GetExtendedTcpTable(buffer, ref size, false, AfInet, TcpTableOwnerPidListener, 0) != 0) return null;
+            // The table can grow between the size query and the read: retry with the new size.
+            uint result = ErrorInsufficientBuffer;
+            for (var attempt = 0; attempt < 5 && result == ErrorInsufficientBuffer; attempt++)
+            {
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+                size += 4096;
+                buffer = Marshal.AllocHGlobal(size);
+                result = GetExtendedTcpTable(buffer, ref size, false, AfInet, TcpTableOwnerPidListener, 0);
+            }
+            if (result != 0) return null;
             var count = Marshal.ReadInt32(buffer);
             var rowSize = Marshal.SizeOf<TcpRowOwnerPid>();
             for (var i = 0; i < count; i++)
@@ -41,7 +51,7 @@ internal static class NativeMethods
         }
         finally
         {
-            Marshal.FreeHGlobal(buffer);
+            if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
         }
     }
 
