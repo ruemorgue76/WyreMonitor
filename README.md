@@ -240,8 +240,8 @@ has a code signing certificate ([setup](docs/signpath)). It would sign only file
 repository: `WyreMonitor.exe`, `WyreMonitor.dll` and the installer. The .NET runtime, the
 libraries of other projects and the PawnIO driver keep their authors' own signatures.
 
-Team roles. WyreMonitor has one maintainer, who holds every role and signs in to GitHub with
-multi-factor authentication:
+Team roles. WyreMonitor has one maintainer, Claudio Cianchi, who holds every role and signs in
+to GitHub with multi-factor authentication:
 
 - Committers and reviewers: [ruemorgue76](https://github.com/ruemorgue76). Changes proposed by
   anyone else (pull requests) are reviewed before they are merged.
@@ -265,7 +265,9 @@ updates* or turn on the daily check. See [GitHub's privacy statement](https://do
 
 ## License
 
-Copyright © 2026 ruemorgue76.
+Copyright © 2026 Claudio Cianchi ([ruemorgue76](https://github.com/ruemorgue76)).
+
+WyreMonitor is written and maintained by Claudio Cianchi.
 
 WyreMonitor is free software: you can use, study, share and change it under the terms of the
 [GNU General Public License](LICENSE), version 3 or any later version. If you distribute a
