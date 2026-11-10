@@ -16,6 +16,9 @@ WyreMonitor reads your PC's temperatures, fans and loads. To do this, it install
 Nothing is sent from your PC. The only internet requests are the PawnIO download during this
 installation and, only when you ask for it, the check for a new WyreMonitor version on GitHub.
 
+Installing a new version over an older one stops the service and the app, replaces every
+program file, and keeps your settings.
+
 To remove WyreMonitor: Windows Settings > Apps > WyreMonitor > Uninstall. This removes the app,
-the service and their settings. PawnIO stays, because other programs may use it; you can
+its folder, the service and your settings. PawnIO stays, because other programs may use it; you can
 uninstall it the same way.
