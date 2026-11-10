@@ -1,6 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using Microsoft.AspNetCore.Hosting.Server;
 using Microsoft.AspNetCore.Hosting.Server.Features;
 using Microsoft.Extensions.Hosting.WindowsServices;
@@ -61,7 +62,12 @@ internal static class ServiceHost
         builder.Services.AddHostedService(sp => sp.GetRequiredService<HardwareMonitorService>());
 
         var app = builder.Build();
-        var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web);
+        // Backstop: a value that isn't a finite number is written as a string rather than making
+        // the whole answer fail (sensor values are already filtered).
+        var jsonOptions = new JsonSerializerOptions(JsonSerializerDefaults.Web)
+        {
+            NumberHandling = JsonNumberHandling.AllowNamedFloatingPointLiterals,
+        };
 
         app.Use(async (context, next) =>
         {

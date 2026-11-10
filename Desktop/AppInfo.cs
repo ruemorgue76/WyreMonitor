@@ -35,6 +35,11 @@ internal static class AppInfo
         try
         {
             Directory.CreateDirectory(DataDir);
+            // An error that repeats every second must not fill the disk: past 1 MB the log starts
+            // over, and the previous one is kept as errors.old.log.
+            var log = new FileInfo(LogPath);
+            if (log.Exists && log.Length > 1024 * 1024)
+                File.Move(LogPath, Path.Combine(DataDir, "errors.old.log"), overwrite: true);
             File.AppendAllText(LogPath, $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {ex}\n\n");
         }
         catch { /* the error is also shown on screen */ }

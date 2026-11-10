@@ -38,6 +38,9 @@ internal static class DesktopApp
 
         Toasts.Register();
         Application.SetHighDpiMode(HighDpiMode.PerMonitorV2);
+        // An error on the window's thread is logged instead of ending the app with a crash dialog.
+        Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
+        Application.ThreadException += (_, e) => AppInfo.LogError(e.Exception);
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
 
@@ -50,7 +53,8 @@ internal static class DesktopApp
                 while (true)
                 {
                     showSignal.WaitOne();
-                    tray.ShowWindow();
+                    try { tray.ShowWindow(); }
+                    catch (Exception) { return; }   // the app is closing
                 }
             })
             { IsBackground = true, Name = "Show window signal" }.Start();

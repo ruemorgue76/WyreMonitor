@@ -99,9 +99,12 @@ its official releases, checks the file's SHA-256, then installs it.
 Closing the window keeps the app next to the clock. **Exit** in the icon's menu quits it, and
 **Start with Windows** turns the icon at sign-in on or off.
 
-**Uninstall** from Windows Settings › Apps. This removes the app, the service and their settings.
-PawnIO stays, since other programs may use it. The window's browser data stays in
-`%LOCALAPPDATA%\WyreMonitor`, and you can delete that folder yourself.
+**Update** by installing a newer version over the old one: setup stops the service and the app,
+replaces every program file and keeps your settings.
+
+**Uninstall** from Windows Settings › Apps. This removes the app, its folder, the service and your
+settings, including the window's browser data in `%LOCALAPPDATA%\WyreMonitor`. PawnIO stays, since
+other programs may use it.
 
 ### Requirements
 

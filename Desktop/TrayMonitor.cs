@@ -251,7 +251,10 @@ internal sealed class TrayMonitor : IDisposable
     {
         var now = DateTime.UtcNow;
         var fresh = alerts.Where(a => !_active.TryGetValue(a.Key, out var seen) || a.Severity > seen.Severity).ToList();
-        foreach (var a in alerts) _active[a.Key] = (a.Severity, now);
+        // Keep the highest severity seen while the alert lasts: a reading that wobbles around the
+        // critical limit must not announce the same alert every few seconds.
+        foreach (var a in alerts)
+            _active[a.Key] = (_active.TryGetValue(a.Key, out var seen) ? Math.Max(seen.Severity, a.Severity) : a.Severity, now);
         foreach (var key in _active.Where(p => now - p.Value.Seen > Forget).Select(p => p.Key).ToList()) _active.Remove(key);
         if (fresh.Count == 0) return;
 
