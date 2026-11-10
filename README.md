@@ -200,6 +200,11 @@ release with it attached (see *Code signing policy*). Once signing is set up
 SignPath. The release notes list the commits since
 the previous version; `-Notes "..."` replaces them.
 
+Without a PC set up for this, a release can also be published from the browser: set `<Version>` in
+`WyreMonitor.csproj` on `main`, then **Actions > Release > Run workflow** on `main` with **Publish**
+ticked. The notes come from `release-notes/<version>.md` when that file exists, otherwise from the
+commits since the previous version.
+
 </details>
 
 <details>

@@ -1,6 +1,7 @@
 # Builds the installer on GitHub's own machines, from the code in this repository, and publishes
-# the release. Started by a version tag (Publish-Release.ps1 pushes one); can also be run by hand
-# from the Actions tab to build without publishing.
+# the release. Started by a version tag (Publish-Release.ps1 pushes one), or by hand from the
+# Actions tab: "Run workflow" on main with "Publish" ticked tags the version in WyreMonitor.csproj
+# and publishes it, from any browser; without "Publish" it only builds.
 #
 # Building here instead of on a personal PC means anyone can check how each installer was made:
 # this file, the commit and the build log are public.
@@ -20,6 +21,10 @@ on:
     tags: ['v*.*.*']
   workflow_dispatch:
     inputs:
+      publish:
+        description: Publish the version in WyreMonitor.csproj (run on main)
+        type: boolean
+        default: false
       sign:
         description: Sign the files (needs an approval on SignPath)
         type: boolean
@@ -35,12 +40,31 @@ jobs:
       contents: write   # only to create the release
       actions: read     # SignPath reads this run's details and artifacts
     env:
-      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && (github.event_name == 'push' || inputs.sign) }}
+      PUBLISH: ${{ github.event_name == 'push' || inputs.publish }}
+      SIGN: ${{ vars.SIGNPATH_ORGANIZATION_ID != '' && (github.event_name == 'push' || inputs.publish || inputs.sign) }}
     steps:
       # Actions are pinned to exact commits: a moved tag can't change what runs here.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          fetch-depth: 0   # tags and history, for the release notes
+
+      # Before building, so a wrong start fails in seconds.
+      - name: Check what will be published
+        if: env.PUBLISH == 'true'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $version = ([xml](Get-Content WyreMonitor.csproj -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            if ("v$version" -ne $env:GITHUB_REF_NAME) { throw "Tag $env:GITHUB_REF_NAME does not match version $version in WyreMonitor.csproj" }
+          } else {
+            if ($env:GITHUB_REF -ne 'refs/heads/main') { throw 'Publish only from main: choose main in "Use workflow from".' }
+            if (git tag -l "v$version") { throw "Version $version is already published: raise <Version> in WyreMonitor.csproj first." }
+          }
+          Write-Host "Publishing WyreMonitor $version"
 
       - uses: actions/setup-dotnet@0f4a354dd5547a28c70b7853dbd95d5b67886e73 # v6.1.0
         with:
@@ -157,27 +181,42 @@ jobs:
           if-no-files-found: error
 
       - name: Publish the release
-        if: github.event_name == 'push'
+        if: env.PUBLISH == 'true'
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
           SETUP: ${{ steps.final.outputs.path }}
           SETUP_NAME: ${{ steps.build.outputs.name }}
           REPO_URL: ${{ github.server_url }}/${{ github.repository }}
         run: |
           $ErrorActionPreference = 'Stop'
-          # The tag must name the version the installer was built with.
           $version = ([xml](Get-Content WyreMonitor.csproj -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
-          if ("v$version" -ne $env:TAG) { throw "Tag $env:TAG does not match version $version in WyreMonitor.csproj" }
+          $env:TAG = "v$version"
 
-          # Release notes: the message of the tag, written by Publish-Release.ps1.
-          git fetch --force origin "refs/tags/${env:TAG}:refs/tags/${env:TAG}"
-          $notes = (git tag -l --format='%(contents:body)' $env:TAG) -join "`n"
+          if ($env:GITHUB_EVENT_NAME -eq 'push') {
+            # Release notes: the message of the tag, written by Publish-Release.ps1.
+            git fetch --force origin "refs/tags/${env:TAG}:refs/tags/${env:TAG}"
+            $notes = (git tag -l --format='%(contents:body)' $env:TAG) -join "`n"
+          } else {
+            # Started by hand: release-notes/<version>.md if it exists, otherwise the commits since
+            # the previous version. Then tag this commit, as Publish-Release.ps1 would have.
+            if (Test-Path "release-notes/$version.md") {
+              $notes = Get-Content "release-notes/$version.md" -Raw
+            } else {
+              $previous = git describe --tags --abbrev=0 2>$null
+              $range = if ($previous) { "$previous..HEAD" } else { 'HEAD' }
+              $lines = git log $range --no-merges --format='- %s' | Where-Object { $_ -notmatch '^- Version \d' }
+              $notes = "## What's new`n`n" + ($lines -join "`n")
+            }
+            $body = @{ tag = $env:TAG; message = "WyreMonitor $version`n`n$notes`n"; object = $env:GITHUB_SHA; type = 'commit' } | ConvertTo-Json
+            $tagSha = ($body | gh api -X POST "repos/$env:GITHUB_REPOSITORY/git/tags" --input - | ConvertFrom-Json).sha
+            gh api -X POST "repos/$env:GITHUB_REPOSITORY/git/refs" -f "ref=refs/tags/$env:TAG" -f "sha=$tagSha" | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw "Could not create tag $env:TAG" }
+          }
 
           $hash = (Get-FileHash $env:SETUP -Algorithm SHA256).Hash.ToLowerInvariant()
           $signed = if ($env:SIGN -eq 'true') { 'The installer and the app are signed by SignPath Foundation.' } else { 'The installer is not code-signed.' }
           $notes += "`n`n## Verify the download`n`nBuilt by GitHub Actions from tag ``$env:TAG``. $signed SHA-256 of ``$env:SETUP_NAME``:`n`n``````text`n$hash`n```````n`nIn PowerShell: ``Get-FileHash .\$env:SETUP_NAME```n`nSee the [Code signing policy]($env:REPO_URL#code-signing-policy)."
           $file = Join-Path $env:RUNNER_TEMP notes.md
           [IO.File]::WriteAllText($file, $notes)
-          gh release create $env:TAG $env:SETUP --title "WyreMonitor $version" --notes-file $file
+          gh release create $env:TAG $env:SETUP --title "WyreMonitor $version" --notes-file $file --verify-tag
