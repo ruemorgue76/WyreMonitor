@@ -117,10 +117,21 @@ const LIFE_WARN = 20;     // SSD remaining life, %
 const LIFE_CRIT = 10;
 
 // ---- Formatting ---------------------------------------------------------------
-const fixed = (v, digits = 0) =>
-  new Intl.NumberFormat(LOCALE, { maximumFractionDigits: digits, minimumFractionDigits: digits }).format(v);
-const upTo = (v, digits = 1) =>
-  new Intl.NumberFormat(LOCALE, { maximumFractionDigits: digits }).format(v);
+// Formatters are made once per number of digits: the list view formats thousands of values a second.
+const formatters = new Map();
+const formatter = (digits, exact) => {
+  const key = `${digits}|${exact}`;
+  let f = formatters.get(key);
+  if (!f) {
+    f = new Intl.NumberFormat(LOCALE, exact
+      ? { maximumFractionDigits: digits, minimumFractionDigits: digits }
+      : { maximumFractionDigits: digits });
+    formatters.set(key, f);
+  }
+  return f;
+};
+const fixed = (v, digits = 0) => formatter(digits, true).format(v);
+const upTo = (v, digits = 1) => formatter(digits, false).format(v);
 
 // Temperatures arrive and are compared in °C; only what is shown is converted.
 const toUnit = (c) => (settings.unit === "F" ? c * 9 / 5 + 32 : c);
@@ -138,7 +149,10 @@ function formatRate(bytesPerSecond) {
 
 function formatValue(type, value, name = "") {
   switch (type) {
-    case "Temperature": return temp(value, 1);
+    case "Temperature":
+      return /Resolution/.test(name)
+        ? `${upTo(settings.unit === "F" ? value * 9 / 5 : value, 2)} ${degrees()}`
+        : temp(value, 1);
     case "Load":
     case "Level":
     case "Control": return `${upTo(value, value < 10 ? 1 : 0)} %`;
@@ -916,17 +930,19 @@ function updateBoard(m) {
   m.drives.forEach((d, i) => {
     const el = board.querySelector(`[data-drive="${i}"]`);
     if (!el) return;
-    name(el, `${d.short}${d.temp ? `, ${temp(d.temp.value)}` : ""}${d.free ? `, ${formatBytes(d.free.value)} free of ${formatBytes(d.total.value)}` : ""}`);
+    const freeRatio = d.free && d.total.value ? d.free.value / d.total.value : 1;
+    // Only when its alert is on, and in words too: the red outline isn't the only signal.
+    const full = settings.alerts.space && d.isSystem && freeRatio < FREE_WARN;
+    name(el, `${d.short}${d.temp ? `, ${temp(d.temp.value)}` : ""}${d.free ? `, ${formatBytes(d.free.value)} free of ${formatBytes(d.total.value)}` : ""}${full ? ", almost full" : ""}`);
     const tempEl = el.querySelector(".drive-temp");
     if (d.temp) {
       setText(tempEl, temp(d.temp.value));
       tempEl.style.color = hue(d.temp.value, d.limit.warn);
     }
     el.querySelector(".meter i").style.transform = `scaleX(${(d.used?.value ?? 0) / 100})`;
-    const freeRatio = d.free && d.total.value ? d.free.value / d.total.value : 1;
-    el.classList.toggle("warn", d.isSystem && freeRatio < FREE_WARN);
+    el.classList.toggle("warn", full);
     // SATA tiles are narrow: remaining life stays in the detail and in the alerts.
-    const extra = [d.life && d.kind === "nvme" ? `life ${fixed(d.life.value)} %` : "", d.isSystem ? "Windows" : ""].filter(Boolean);
+    const extra = [full ? "almost full" : "", d.life && d.kind === "nvme" ? `life ${fixed(d.life.value)} %` : "", d.isSystem ? "Windows" : ""].filter(Boolean);
     setText(el.querySelector(".drive-note"),
       d.free ? `${formatBytes(d.free.value)} free of ${formatBytes(d.total.value)}${extra.length ? `, ${extra.join(", ")}` : ""}` : "");
   });
@@ -1023,7 +1039,7 @@ function collectAlerts(m) {
   // stop on purpose.
   for (const f of on.fans ? m.fans : []) {
     if (fanStopped(f)) {
-      add(2, `${fanName(f)} stopped`, "It reads 0 RPM. Check its cable and that nothing blocks it.", f.group.name, { label: fanName(f), code: `F${f.label[0]}` });
+      add(2, `${fanName(f)} stopped`, "It reads 0 RPM. Check its cable and that nothing blocks it.", f.group.name, { label: fanName(f), code: `F${f.label[0]}`, chartId: f.sensor.id });
     }
   }
   return alerts.sort((a, b) => b.sev - a.sev);
@@ -1046,7 +1062,7 @@ function renderVerdict(title, bodyHtml, key, alerts = [], level = "off", code = 
   setText($("verdictTitle"), title);
   $("verdictBody").innerHTML = bodyHtml;
   $("verdictBody").querySelectorAll("[data-alert]").forEach((b) => {
-    b.addEventListener("click", () => select(alerts[+b.dataset.alert].target));
+    b.addEventListener("click", () => select(alerts[+b.dataset.alert].target, alerts[+b.dataset.alert].chartId));
   });
   $("verdictBody").querySelector("[data-limits]")?.addEventListener("click", () => openSettings(true, "alerts"));
 }
@@ -1099,12 +1115,24 @@ function updateVerdict(m) {
   else if (first.value != null && (state.incident.peak == null || first.value > state.incident.peak)) state.incident.peak = first.value;
 
   // One alert: its explanation and two actions, each doing what it says. Several: one link per alert.
+  const title = alerts.length === 1 ? first.title : `${alerts.length} things to check`;
+  // The buttons are rebuilt only when the alerts themselves change; a reading that changes by a
+  // degree only updates the words, so a button that has focus or is being clicked stays.
+  const key = "alerts:" + alerts.map((a) => `${a.target}|${a.sev}|${a.kind ?? ""}|${a.chartId ?? ""}`).join(";");
+  if (state.verdictKey === key) {
+    setText($("verdictTitle"), title);
+    const detail = $("verdictBody").querySelector("[data-detail]");
+    if (detail) setText(detail, first.detail);
+    $("verdictBody").querySelectorAll("[data-alert]").forEach((b) => {
+      if (alerts.length > 1) setText(b, alerts[+b.dataset.alert].title);
+    });
+    return;
+  }
   const links = alerts.length === 1
-    ? `<span>${esc(first.detail)}</span><span class="alert-actions"><button type="button" class="alert-link" data-alert="0">Show ${esc(first.label ?? "the part")}</button>${
+    ? `<span data-detail>${esc(first.detail)}</span><span class="alert-actions"><button type="button" class="alert-link" data-alert="0">Show ${esc(first.label ?? "the part")}</button>${
       first.kind === "temp" ? `<button type="button" class="alert-link" data-limits>Change the limit</button>` : ""}</span>`
     : alerts.map((a, i) => `<button type="button" class="alert-link" data-alert="${i}">${esc(a.title)}</button>`).join("");
-  const title = alerts.length === 1 ? first.title : `${alerts.length} things to check`;
-  renderVerdict(title, links, alerts.map((a) => a.title + a.detail).join("|"), alerts, first.sev === 2 ? "crit" : "warn", codeFor(m, first));
+  renderVerdict(title, links, key, alerts, first.sev === 2 ? "crit" : "warn", codeFor(m, first));
 }
 
 const RECOVERED_FOR = 10 * 60 * 1000;
@@ -1150,6 +1178,7 @@ function defaultChart(g) {
 }
 
 function select(name, chartId) {
+  if (!state.model) return;
   // Choosing a part means wanting its detail: bring the panel back if it was hidden.
   if (!settings.rail) setRail(true);
   state.selected = name;
@@ -1167,6 +1196,7 @@ function select(name, chartId) {
 
 function renderRail() {
   const m = state.model;
+  if (!m) return;   // before the first reading (service not answering yet)
   const g = m.snapshot.hardware.find((h) => h.name === state.selected);
   state.sensorRows.clear();
   if (!g) {
@@ -1230,6 +1260,7 @@ function renderRail() {
 
 function updateRail() {
   const m = state.model;
+  if (!m) return;
   const g = m.snapshot.hardware.find((h) => h.name === state.selected);
   if (!g) return;
 
@@ -1342,6 +1373,7 @@ function ago(when) {
 
 function hideTarget() {
   const m = state.model;
+  if (!m) return null;
   const fan = m.fans.find((f) => f.sensor.id === state.chartId && f.group.name === state.selected);
   if (fan) return { key: fan.sensor.id, label: fanName(fan) };
   const g = m.snapshot.hardware.find((h) => h.name === state.selected);
@@ -1411,7 +1443,7 @@ async function poll() {
     const res = await fetch(url, { cache: "no-store", signal: controller.signal });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const snapshot = await res.json();
-    const m = readModel(snapshot);
+    let m = readModel(snapshot);
     state.model = m;
 
     const sig = signatureOf(m);
@@ -1429,6 +1461,8 @@ async function poll() {
         const j = await hr.json();
         if (Array.isArray(j.history)) state.longHistory = { id: j.id, values: j.history.filter(Number.isFinite) };
       }
+      // A part hidden or renamed while waiting rebuilt the board from a newer model: use that one.
+      m = state.model;
     }
 
     state.lastOk = Date.now();
