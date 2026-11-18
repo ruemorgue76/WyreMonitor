@@ -30,6 +30,18 @@ checks then download, scan and install the package; a moderator merges it, usual
 
 ## Later versions
 
+Submit the next version only after the first one is merged: winget-pkgs accepts one open pull
+request per package at a time.
+
+Ready to submit: **1.5.6**, in `manifests/r/ruemorgue76/WyreMonitor/1.5.6` (installer SHA-256
+checked against the release asset). Test it as above, using the `1.5.6` folder, then:
+
 ```powershell
-wingetcreate update ruemorgue76.WyreMonitor --version 1.5.3 --urls https://github.com/ruemorgue76/WyreMonitor/releases/download/v1.5.3/WyreMonitor-Setup-1.5.3.exe --submit --token <GitHub token>
+wingetcreate submit --token <GitHub token> .\packaging\winget\manifests\r\ruemorgue76\WyreMonitor\1.5.6
+```
+
+For any later version, wingetcreate can download the installer and work out the hash itself:
+
+```powershell
+wingetcreate update ruemorgue76.WyreMonitor --version 1.5.7 --urls https://github.com/ruemorgue76/WyreMonitor/releases/download/v1.5.7/WyreMonitor-Setup-1.5.7.exe --submit --token <GitHub token>
 ```
