@@ -30,8 +30,8 @@ checks then download, scan and install the package; a moderator merges it, usual
 
 ## Later versions
 
-Submit the next version only after the first one is merged: winget-pkgs accepts one open pull
-request per package at a time.
+Wait until the first version is merged before submitting the next, so the update lands on a
+package that already exists in winget-pkgs.
 
 Ready to submit: **1.5.6**, in `manifests/r/ruemorgue76/WyreMonitor/1.5.6` (installer SHA-256
 checked against the release asset). Test it as above, using the `1.5.6` folder, then:
